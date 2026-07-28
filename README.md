@@ -48,12 +48,31 @@ Zorix is currently in early development.
 ## Implemented Capabilities
 
 - обнаружение Docker-контейнеров через read-only Docker Adapter.
+- Resource Graph foundation provides a validated in-memory model for resources and directed relations.
 
 Run Docker container discovery through the example plugin:
 
 ```bash
 zorix scan --plugins ./examples/plugins/docker
 ```
+
+## Architecture Foundation
+
+Current foundation:
+
+```text
+Adapters
+    ↓
+Scan Engine
+    ↓
+Runtime
+    ↓
+Resource Graph
+    ↓
+Presentation / future API / AI
+```
+
+Runtime does not automatically build Resource Graph yet. Resource Graph can be built explicitly from discovered resources through the public `ResourceGraphBuilder` API.
 
 ## Project Status
 

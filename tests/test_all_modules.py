@@ -15,6 +15,7 @@ MODULE_TEST_DIRS = [
     ROOT / "modules" / "plugin_loader" / "tests",
     ROOT / "modules" / "presentation" / "tests",
     ROOT / "modules" / "registry" / "tests",
+    ROOT / "modules" / "resource_graph" / "tests",
     ROOT / "modules" / "scan_engine" / "tests",
     ROOT / "modules" / "runtime" / "tests",
 ]
