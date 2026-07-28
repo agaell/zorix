@@ -2,6 +2,7 @@ import unittest
 
 import zorix
 import zorix_core_model
+import zorix_docker_adapter
 import zorix_mock_adapter
 import zorix_plugin_loader
 import zorix_presentation
@@ -15,6 +16,7 @@ class PackagingImportTest(unittest.TestCase):
     def test_public_packages_import(self) -> None:
         self.assertEqual(zorix.__version__, "0.1.0")
         self.assertTrue(zorix_core_model)
+        self.assertTrue(zorix_docker_adapter)
         self.assertTrue(zorix_mock_adapter)
         self.assertTrue(zorix_plugin_loader)
         self.assertTrue(zorix_presentation)

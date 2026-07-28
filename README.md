@@ -45,6 +45,16 @@ Zorix is currently in early development.
 - AI agent runtime
 - Secure infrastructure operations
 
+## Implemented Capabilities
+
+- обнаружение Docker-контейнеров через read-only Docker Adapter.
+
+Run Docker container discovery through the example plugin:
+
+```bash
+zorix scan --plugins ./examples/plugins/docker
+```
+
 ## Project Status
 
 > **Early development**
