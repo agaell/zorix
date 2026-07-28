@@ -4,6 +4,7 @@ import zorix
 import zorix_core_model
 import zorix_mock_adapter
 import zorix_plugin_loader
+import zorix_presentation
 import zorix_registry
 import zorix_scan_engine
 import zorix_runtime
@@ -16,6 +17,7 @@ class PackagingImportTest(unittest.TestCase):
         self.assertTrue(zorix_core_model)
         self.assertTrue(zorix_mock_adapter)
         self.assertTrue(zorix_plugin_loader)
+        self.assertTrue(zorix_presentation)
         self.assertTrue(zorix_registry)
         self.assertTrue(zorix_scan_engine)
         self.assertTrue(zorix_runtime)

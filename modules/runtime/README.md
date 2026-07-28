@@ -17,7 +17,7 @@ Runtime не добавляет новую архитектурную модел
 ## Схема
 
 ```text
-PluginLoader -> Registry -> ScanEngine
+PluginLoader -> Registry -> ScanEngine -> Runtime -> Presentation Layer -> future CLI
 ```
 
 `PluginLoader` загружает адаптеры из каталога.
@@ -25,6 +25,10 @@ PluginLoader -> Registry -> ScanEngine
 `Registry` хранит зарегистрированные адаптеры и запрещает дубликаты по типу класса.
 
 `ScanEngine` вызывает `discover()` у адаптеров из `Registry` и возвращает `ScanResult`.
+
+`Runtime` связывает загрузку, регистрацию и запуск сканирования.
+
+`Presentation Layer` преобразует готовый `ScanResult` в текст для будущего CLI.
 
 ## Пример
 

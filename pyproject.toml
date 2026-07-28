@@ -36,6 +36,7 @@ packages = [
     "zorix_core_model",
     "zorix_mock_adapter",
     "zorix_plugin_loader",
+    "zorix_presentation",
     "zorix_registry",
     "zorix_scan_engine",
     "zorix_runtime",
@@ -46,6 +47,7 @@ zorix = "src/zorix"
 zorix_core_model = "modules/core_model/src/zorix_core_model"
 zorix_mock_adapter = "modules/mock_adapter/src/zorix_mock_adapter"
 zorix_plugin_loader = "modules/plugin_loader/src/zorix_plugin_loader"
+zorix_presentation = "modules/presentation/src/zorix_presentation"
 zorix_registry = "modules/registry/src/zorix_registry"
 zorix_scan_engine = "modules/scan_engine/src/zorix_scan_engine"
 zorix_runtime = "modules/runtime/src/zorix_runtime"
