@@ -1,16 +1,8 @@
 from __future__ import annotations
 
-import sys
 import unittest
 from pathlib import Path
 
-
-ROOT = Path(__file__).resolve().parents[3]
-sys.path.insert(0, str(ROOT / "modules" / "core_model" / "src"))
-sys.path.insert(0, str(ROOT / "modules" / "plugin_loader" / "src"))
-sys.path.insert(0, str(ROOT / "modules" / "registry" / "src"))
-sys.path.insert(0, str(ROOT / "modules" / "scan_engine" / "src"))
-sys.path.insert(0, str(ROOT / "modules" / "runtime" / "src"))
 
 from zorix_core_model import Adapter, Resource
 from zorix_plugin_loader import PluginLoader

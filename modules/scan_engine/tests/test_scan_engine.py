@@ -1,15 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import FrozenInstanceError
-import sys
 import unittest
-from pathlib import Path
-
-
-ROOT = Path(__file__).resolve().parents[3]
-sys.path.insert(0, str(ROOT / "modules" / "core_model" / "src"))
-sys.path.insert(0, str(ROOT / "modules" / "registry" / "src"))
-sys.path.insert(0, str(ROOT / "modules" / "scan_engine" / "src"))
 
 from zorix_core_model import Adapter, Resource
 from zorix_registry import Registry

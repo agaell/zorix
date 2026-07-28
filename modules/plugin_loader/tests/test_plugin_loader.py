@@ -1,4 +1,3 @@
-import sys
 import tempfile
 import textwrap
 import unittest
@@ -6,9 +5,6 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[3]
-sys.path.insert(0, str(ROOT / "modules" / "core_model" / "src"))
-sys.path.insert(0, str(ROOT / "modules" / "plugin_loader" / "src"))
-sys.path.insert(0, str(ROOT / "modules" / "mock_adapter" / "src"))
 
 from zorix_core_model import Adapter
 from zorix_mock_adapter import MockAdapter

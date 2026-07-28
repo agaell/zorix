@@ -1,18 +1,11 @@
 from __future__ import annotations
 
 from collections import Counter
-import sys
 import unittest
 from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[3]
-sys.path.insert(0, str(ROOT / "modules" / "core_model" / "src"))
-sys.path.insert(0, str(ROOT / "modules" / "plugin_loader" / "src"))
-sys.path.insert(0, str(ROOT / "modules" / "registry" / "src"))
-sys.path.insert(0, str(ROOT / "modules" / "scan_engine" / "src"))
-sys.path.insert(0, str(ROOT / "modules" / "runtime" / "src"))
-sys.path.insert(0, str(ROOT / "modules" / "mock_adapter" / "src"))
 
 from zorix_scan_engine import ScanStatus
 from zorix_runtime import ZorixRuntime
