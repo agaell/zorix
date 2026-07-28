@@ -9,9 +9,9 @@ __pycache__/
 .pytest_cache/
 .venv/
 venv/
+build/
+dist/
 
 # IDE
 .vscode/
-.idea/# macOS
-.DS_Store
-**/.DS_Store
+.idea/

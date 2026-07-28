@@ -1,16 +1,28 @@
-import sys
-from pathlib import Path
+import unittest
 
-
-CORE_MODEL_SRC = Path(__file__).resolve().parents[1] / "modules" / "core_model" / "src"
-sys.path.insert(0, str(CORE_MODEL_SRC))
-
+import zorix
+import zorix_core_model
+import zorix_mock_adapter
+import zorix_plugin_loader
+import zorix_registry
+import zorix_scan_engine
+import zorix_runtime
 from zorix_core_model import Adapter, Event, Resource, Tool, Workflow
 
 
-def test_core_model_imports() -> None:
-    assert Adapter
-    assert Event
-    assert Resource
-    assert Tool
-    assert Workflow
+class PackagingImportTest(unittest.TestCase):
+    def test_public_packages_import(self) -> None:
+        self.assertEqual(zorix.__version__, "0.1.0")
+        self.assertTrue(zorix_core_model)
+        self.assertTrue(zorix_mock_adapter)
+        self.assertTrue(zorix_plugin_loader)
+        self.assertTrue(zorix_registry)
+        self.assertTrue(zorix_scan_engine)
+        self.assertTrue(zorix_runtime)
+
+    def test_core_model_exports_import(self) -> None:
+        self.assertTrue(Adapter)
+        self.assertTrue(Event)
+        self.assertTrue(Resource)
+        self.assertTrue(Tool)
+        self.assertTrue(Workflow)
