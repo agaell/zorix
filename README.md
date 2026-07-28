@@ -58,3 +58,42 @@ Clone the repository:
 ```bash
 git clone https://github.com/agaell/zorix.git
 cd zorix
+```
+
+Set up editable installation:
+
+```bash
+python3 -m venv .venv
+source .venv/bin/activate
+python -m pip install --upgrade pip
+python -m pip install -e .
+python -m unittest discover
+```
+
+## CLI
+
+Show the installed Zorix version:
+
+```bash
+zorix --version
+```
+
+Run a resource scan with adapters loaded from a plugin directory:
+
+```bash
+zorix scan --plugins ./plugins
+```
+
+Continue scanning remaining adapters after adapter errors:
+
+```bash
+zorix scan --plugins ./plugins --continue-on-error
+```
+
+Exit codes:
+
+- `0` — `SUCCESS`
+- `1` — execution error
+- `2` — usage error
+- `3` — `PARTIAL`
+- `4` — `FAILED`

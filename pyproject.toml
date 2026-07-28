@@ -30,6 +30,9 @@ dev = [
 [project.urls]
 Repository = "https://github.com/agaell/zorix"
 
+[project.scripts]
+zorix = "zorix.cli:main"
+
 [tool.setuptools]
 packages = [
     "zorix",
