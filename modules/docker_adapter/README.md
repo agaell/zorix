@@ -1,116 +1,192 @@
 # Docker Adapter
 
-`modules/docker_adapter` содержит первый read-only адаптер Zorix для обнаружения Docker-контейнеров.
+`modules/docker_adapter` содержит read-only адаптер Zorix для локального Docker Engine.
 
-Адаптер преобразует контейнеры, доступные через локальную команду `docker`, в существующие объекты `Resource` из Core Model. Он не создает отдельный тип ресурса для Docker и не изменяет контракт `Adapter`.
+Адаптер реализует базовый контракт `Adapter` и структурно реализует capability `TopologyProvider`: он предоставляет метод `discover_relations(context)`, но не наследует `TopologyProvider` явно.
 
-## Назначение
+## Роль
 
-Docker Adapter отвечает только за обнаружение контейнеров.
+Docker Adapter отвечает за две операции:
 
-Он не запускает, не останавливает, не изменяет и не удаляет контейнеры. Адаптер не знает о CLI, `ConsoleRenderer`, `Registry`, `ScanEngine` и `PluginLoader`. Эти компоненты остаются на своих уровнях архитектуры.
+- inventory discovery: обнаружение Docker containers, images и networks как `Resource`;
+- topology discovery: построение связей между уже обнаруженными Docker resources.
 
-## Почему Docker CLI
+Адаптер не управляет Docker, не изменяет контейнеры, образы или сети, не читает конфигурационные файлы и не форматирует вывод для CLI.
 
-В этой итерации используется установленная команда `docker`, а не Docker SDK for Python и не прямое обращение к Docker Engine API.
+## Read-only команды
 
-Такой подход оставляет модуль без внешних Python-зависимостей и сохраняет простую границу: адаптер выполняет только разрешенные read-only команды Docker CLI.
-
-## Команды
-
-Адаптер выполняет только две команды:
+Адаптер выполняет только следующие Docker CLI команды:
 
 ```bash
 docker container ls --all --quiet --no-trunc
 docker container inspect <container-id>...
+docker image ls --all --quiet --no-trunc
+docker image inspect <image-id>...
+docker network ls --quiet --no-trunc
+docker network inspect <network-id>...
 ```
 
-Идентификаторы контейнеров поступают только из результата `docker container ls`. Адаптер не принимает произвольные Docker-команды из CLI, плагинов или `Resource`.
+Команды запускаются без shell. Аргументы формируются только из фиксированных подкоманд, ID из Docker inventory и namespaced `Resource.id` из `TopologyContext`.
 
-## Обнаруживаемые ресурсы
+## Resource mapping
 
-Поддерживаются running и stopped containers.
+`discover()` возвращает ресурсы в фиксированном порядке:
 
-Каждый контейнер преобразуется в `Resource`:
+1. containers;
+2. images;
+3. networks.
+
+Внутри каждой категории сохраняется порядок `docker inspect`.
+
+### Container Resource
 
 - `id`: `docker:container:<full Docker ID>`
 - `type`: `container`
-- `name`: Docker `Name` без начального `/`, либо первые 12 символов ID
-- `state`: `State.Status`, либо `unknown`
+- `name`: Docker `Name` без одного начального `/`, fallback - первые 12 символов ID
+- `state`: `State.Status`, fallback - `unknown`
 - `labels`: строковые пары из `Config.Labels`
-- `metadata`: ограниченный набор простых строковых значений
+- `metadata`: `docker_id`, `image`, `image_id`, `created`, `hostname`, `health`, `restart_policy`, `networks`
 
-## Metadata
+### Image Resource
 
-В `metadata` могут попадать только доступные и непустые значения:
+- `id`: `docker:image:<full image ID>`
+- `type`: `image`
+- `name`: первый валидный `RepoTags`, кроме `<none>:<none>`, fallback - short image ID
+- `state`: `present`
+- `labels`: строковые пары из `Config.Labels`
+- `metadata`: `docker_id`, `created`, `architecture`, `os`, `variant`, `size_bytes`, `repo_tags`, `repo_digests`
 
-- `docker_id`
-- `image`
-- `image_id`
-- `created`
-- `hostname`
-- `health`
-- `restart_policy`
-- `networks`
+`present` означает, что образ есть в локальном Docker Engine. Это не runtime-состояние.
 
-Docker-структуры `Config`, `HostConfig`, `State` и `NetworkSettings` целиком не сохраняются.
+### Network Resource
 
-`networks` содержит имена сетей, отсортированные и объединенные через запятую. Сети пока не являются отдельными `Resource`.
+- `id`: `docker:network:<full network ID>`
+- `type`: `network`
+- `name`: Docker `Name`, fallback - первые 12 символов ID
+- `state`: `present`
+- `labels`: строковые пары из верхнего поля `Labels`
+- `metadata`: `docker_id`, `driver`, `scope`, `created`, `internal`, `attachable`, `ingress`, `ipv6`, `ipam_driver`, `subnets`, `gateways`
 
-## Ошибки
+`present` означает, что сеть зарегистрирована в Docker Engine.
 
-Все ошибки адаптера наследуются от `DockerAdapterError`.
+## Topology mapping
 
-Основные типы ошибок:
+`discover_relations(context)` работает только с ресурсами:
 
-- `DockerExecutableNotFoundError`: команда Docker CLI не найдена.
-- `DockerCommandError`: Docker CLI вернул ненулевой exit code.
-- `DockerCommandTimeoutError`: команда Docker CLI превысила timeout.
-- `DockerOutputError`: Docker CLI вернул некорректный или небезопасный для разбора вывод.
+- `resource.type == "container"`;
+- `resource.id` начинается с `docker:container:`.
 
-Адаптер не печатает stdout, stderr или traceback. Обработка пользовательского вывода остается ответственностью верхних слоев.
+Метод не вызывает `container ls`. Он получает Docker IDs из `TopologyContext`, выполняет новый `docker container inspect <id>...` и возвращает только `ResourceRelation`.
+
+### uses_image
+
+Связь создается из контейнера к образу:
+
+```text
+docker:container:<container-id> --uses_image--> docker:image:<image-id>
+```
+
+Источник:
+
+- container `Id`;
+- container `Image`;
+- optional metadata `reference` из `Config.Image`.
+
+Связь создается только если container и image уже есть в `TopologyContext`.
+
+### connected_to
+
+Связь создается из контейнера к сети:
+
+```text
+docker:container:<container-id> --connected_to--> docker:network:<network-id>
+```
+
+Источник:
+
+- container `Id`;
+- `NetworkSettings.Networks[*].NetworkID`;
+- optional metadata `network_name`, `ipv4_address`, `ipv6_address`, `mac_address`.
+
+Связь создается только если container и network уже есть в `TopologyContext`.
+
+## Порядок relations
+
+Порядок связей фиксирован:
+
+1. порядок Docker container resources в `TopologyContext`;
+2. для каждого контейнера сначала `uses_image`;
+3. затем `connected_to` в порядке `NetworkSettings.Networks`.
+
+Дубликаты relations удаляются по `relation.identity`; первое появление сохраняется. `metadata` не участвует в identity.
+
+## Drift между scan и topology
+
+Docker Engine может измениться между `runtime.scan()` и `runtime.build_topology(...)`.
+
+Правила текущей версии:
+
+- relation создается только при наличии обоих endpoint в `TopologyContext`;
+- новые Docker objects, которых не было в scan result, игнорируются;
+- исчезнувший контейнер может отсутствовать в повторном inspect output;
+- отсутствие inspect item само по себе не считается ошибкой;
+- malformed inspect JSON остается `DockerOutputError`.
+
+Адаптер не хранит скрытый mutable cache между `discover()` и `discover_relations()`. Поэтому topology step выполняет повторный `docker container inspect`. Возможная будущая оптимизация - immutable discovery snapshot.
+
+## Пример Python API
+
+```python
+from zorix_runtime import ZorixRuntime
+
+runtime = ZorixRuntime()
+runtime.load_plugins("./examples/plugins/docker")
+
+scan_result = runtime.scan()
+topology_result = runtime.build_topology(scan_result.resources)
+
+for relation in topology_result.graph.relations():
+    print(relation.source_id, relation.type, relation.target_id)
+```
+
+CLI `scan` отображает найденные `Resource`, но пока не отображает `Relation`. Команды `graph` в этой итерации нет.
 
 ## Использование через PluginLoader
 
-Пример официального плагина находится в:
+Пример плагина находится в:
 
 ```text
 examples/plugins/docker
 ```
 
-Запуск через CLI после editable install:
+Плагин экспортирует:
 
-```bash
-zorix scan --plugins ./examples/plugins/docker
+```python
+Adapter = DockerAdapter
 ```
 
-При работающем Docker Engine результатом будет `SUCCESS` и список найденных контейнеров.
-
-Если контейнеров нет, результатом будет `SUCCESS` и `Resources: 0`.
-
-Если Docker CLI отсутствует или Docker daemon недоступен, CLI вернет execution error без Python traceback.
-
-## Ручная smoke-проверка
-
-```bash
-docker version
-zorix scan --plugins ./examples/plugins/docker
-```
-
-Эта проверка не входит в обязательные unit-тесты, потому что зависит от локального Docker Engine.
+Он не дублирует реализацию адаптера.
 
 ## Ограничения
 
-В текущей итерации адаптер не поддерживает:
+В текущей версии не поддерживаются:
 
-- Docker images как отдельные ресурсы;
-- Docker networks как отдельные ресурсы;
 - Docker volumes;
+- mounts topology;
+- published ports как отдельные ресурсы;
 - Docker Compose topology;
 - Docker Swarm;
 - Kubernetes;
-- метрики контейнеров;
-- удаленный Docker host;
-- изменение состояния контейнеров.
+- logs;
+- metrics;
+- retries;
+- async или parallel inspect;
+- chunking больших inspect-запросов;
+- cache;
+- remote Docker context configuration;
+- Docker SDK или Engine API;
+- CLI graph;
+- renderer для relations;
+- persistence.
 
-Один вызов `docker container inspect` для всех найденных контейнеров допустим для первой версии. Разбиение на batches можно рассмотреть позже для окружений с очень большим числом контейнеров.
+Возможные будущие улучшения: inspect chunking, immutable inventory snapshot, Docker engine identity, Docker context support, volume resources, mount relations, published port resources и Compose service topology.

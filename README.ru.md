@@ -51,7 +51,8 @@ Zorix — open-source платформа для исследования, мод
 
 ## Реализованные возможности
 
-- обнаружение Docker-контейнеров через read-only Docker Adapter;
+- read-only Docker Adapter обнаруживает Docker containers, images и networks;
+- Docker Adapter строит связи container `uses_image` image и container `connected_to` network;
 - фундамент Resource Graph предоставляет валидированную in-memory модель ресурсов и направленных связей.
 - Topology Provider API задает необязательную capability, через которую адаптеры смогут предоставлять направленные связи между ресурсами.
 - Topology Engine строит Resource Graph из уже обнаруженных ресурсов и optional topology providers.
@@ -75,9 +76,9 @@ Registry
        ResourceGraph
 ```
 
-Runtime может строить topology через Python API. Это остается явным вторым шагом: `scan()` не строит topology автоматически. CLI `scan` по-прежнему выводит только `ScanResult`, а команды `graph` пока нет. Docker Adapter пока не реализует `TopologyProvider`.
+Runtime может строить topology через Python API. Это остается явным вторым шагом: `scan()` не строит topology автоматически. CLI `scan` по-прежнему выводит только `ScanResult`, а команды `graph` пока нет.
 
-Topology строится только для adapters, реализующих `TopologyProvider`. Это пока не поддержка Docker topology.
+Topology строится только для adapters, реализующих `TopologyProvider`. Docker Adapter теперь предоставляет Docker container-to-image и container-to-network topology через этот API.
 
 ```python
 from zorix_runtime import ZorixRuntime
@@ -91,6 +92,23 @@ topology_result = runtime.build_topology(
     continue_on_error=True,
 )
 ```
+
+Docker topology через Python Runtime API:
+
+```python
+from zorix_runtime import ZorixRuntime
+
+runtime = ZorixRuntime()
+runtime.load_plugins("./examples/plugins/docker")
+
+scan_result = runtime.scan()
+topology_result = runtime.build_topology(scan_result.resources)
+
+for relation in topology_result.graph.relations():
+    print(relation.source_id, relation.type, relation.target_id)
+```
+
+Текущая Docker-поддержка не включает управление Docker, Docker Compose topology, volumes, CLI-команду `graph` или web UI для topology.
 
 ## Статус проекта
 
