@@ -54,26 +54,30 @@ Zorix — open-source платформа для исследования, мод
 - обнаружение Docker-контейнеров через read-only Docker Adapter;
 - фундамент Resource Graph предоставляет валидированную in-memory модель ресурсов и направленных связей.
 - Topology Provider API задает необязательную capability, через которую адаптеры смогут предоставлять направленные связи между ресурсами.
+- Topology Engine строит Resource Graph из уже обнаруженных ресурсов и optional topology providers.
 
 ## Архитектурная основа
 
-Текущая основа:
+Текущая основа топологии:
 
 ```text
-Adapters
-    ├── Resource discovery
-    └── optional TopologyProvider
-                 ↓
-          ResourceRelation[]
-                 ↓
-          ResourceGraphBuilder
-                 ↓
-           ResourceGraph
+Registry
+    ↓
+ScanEngine
+    ↓
+ScanResult.resources
+    ↓
+TopologyEngine
+    ├── TopologyProvider capability detection
+    ├── TopologyContext
+    └── ResourceGraphBuilder
+              ↓
+         ResourceGraph
 ```
 
-Topology Provider API уже создан, но автоматический `TopologyEngine` пока не реализован. Docker Adapter пока не предоставляет relations. Runtime пока не строит Resource Graph автоматически.
+Topology Engine реализован. Runtime пока не вызывает его автоматически. CLI пока не имеет команды `graph`. Docker Adapter пока не реализует `TopologyProvider`.
 
-Граф можно явно создать из обнаруженных ресурсов и связей через публичный API `ResourceGraphBuilder`.
+Граф можно построить программно через Python API. Это пока не поддержка Docker topology.
 
 ## Статус проекта
 

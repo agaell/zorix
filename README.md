@@ -50,6 +50,7 @@ Zorix is currently in early development.
 - обнаружение Docker-контейнеров через read-only Docker Adapter.
 - Resource Graph foundation provides a validated in-memory model for resources and directed relations.
 - Topology Provider API defines an optional capability for adapters to provide directed resource relations.
+- Topology Engine builds a Resource Graph from discovered resources and optional topology providers.
 
 Run Docker container discovery through the example plugin:
 
@@ -59,23 +60,26 @@ zorix scan --plugins ./examples/plugins/docker
 
 ## Architecture Foundation
 
-Current foundation:
+Current topology foundation:
 
 ```text
-Adapters
-    ├── Resource discovery
-    └── optional TopologyProvider
-                 ↓
-          ResourceRelation[]
-                 ↓
-          ResourceGraphBuilder
-                 ↓
-           ResourceGraph
+Registry
+    ↓
+ScanEngine
+    ↓
+ScanResult.resources
+    ↓
+TopologyEngine
+    ├── TopologyProvider capability detection
+    ├── TopologyContext
+    └── ResourceGraphBuilder
+              ↓
+         ResourceGraph
 ```
 
-The Topology Provider API exists, but automatic `TopologyEngine` is not implemented yet. Docker Adapter does not provide relations yet. Runtime does not automatically build Resource Graph yet.
+Topology Engine is implemented. Runtime does not call it automatically yet. CLI does not have a `graph` command yet. Docker Adapter does not implement `TopologyProvider` yet.
 
-Resource Graph can be built explicitly from discovered resources and relations through the public `ResourceGraphBuilder` API.
+Resource Graph can be built programmatically through the Python API. This is not Docker topology support yet.
 
 ## Project Status
 
