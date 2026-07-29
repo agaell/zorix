@@ -55,29 +55,42 @@ Zorix — open-source платформа для исследования, мод
 - фундамент Resource Graph предоставляет валидированную in-memory модель ресурсов и направленных связей.
 - Topology Provider API задает необязательную capability, через которую адаптеры смогут предоставлять направленные связи между ресурсами.
 - Topology Engine строит Resource Graph из уже обнаруженных ресурсов и optional topology providers.
+- Runtime предоставляет Python API для явного цикла сканирования и построения топологии.
 
 ## Архитектурная основа
 
 Текущая основа топологии:
 
 ```text
+PluginLoader
+    ↓
 Registry
-    ↓
-ScanEngine
-    ↓
-ScanResult.resources
-    ↓
-TopologyEngine
-    ├── TopologyProvider capability detection
-    ├── TopologyContext
-    └── ResourceGraphBuilder
-              ↓
-         ResourceGraph
+    ├── ScanEngine
+    │       ↓
+    │   ScanResult
+    └── TopologyEngine
+            ↓
+       TopologyResult
+            ↓
+       ResourceGraph
 ```
 
-Topology Engine реализован. Runtime пока не вызывает его автоматически. CLI пока не имеет команды `graph`. Docker Adapter пока не реализует `TopologyProvider`.
+Runtime может строить topology через Python API. Это остается явным вторым шагом: `scan()` не строит topology автоматически. CLI `scan` по-прежнему выводит только `ScanResult`, а команды `graph` пока нет. Docker Adapter пока не реализует `TopologyProvider`.
 
-Граф можно построить программно через Python API. Это пока не поддержка Docker topology.
+Topology строится только для adapters, реализующих `TopologyProvider`. Это пока не поддержка Docker topology.
+
+```python
+from zorix_runtime import ZorixRuntime
+
+runtime = ZorixRuntime()
+runtime.load_plugins("./plugins")
+
+scan_result = runtime.scan(continue_on_error=True)
+topology_result = runtime.build_topology(
+    scan_result.resources,
+    continue_on_error=True,
+)
+```
 
 ## Статус проекта
 

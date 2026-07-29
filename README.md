@@ -51,6 +51,7 @@ Zorix is currently in early development.
 - Resource Graph foundation provides a validated in-memory model for resources and directed relations.
 - Topology Provider API defines an optional capability for adapters to provide directed resource relations.
 - Topology Engine builds a Resource Graph from discovered resources and optional topology providers.
+- Runtime provides a Python API for the explicit scan and topology-building workflow.
 
 Run Docker container discovery through the example plugin:
 
@@ -63,23 +64,35 @@ zorix scan --plugins ./examples/plugins/docker
 Current topology foundation:
 
 ```text
+PluginLoader
+    ↓
 Registry
-    ↓
-ScanEngine
-    ↓
-ScanResult.resources
-    ↓
-TopologyEngine
-    ├── TopologyProvider capability detection
-    ├── TopologyContext
-    └── ResourceGraphBuilder
-              ↓
-         ResourceGraph
+    ├── ScanEngine
+    │       ↓
+    │   ScanResult
+    └── TopologyEngine
+            ↓
+       TopologyResult
+            ↓
+       ResourceGraph
 ```
 
-Topology Engine is implemented. Runtime does not call it automatically yet. CLI does not have a `graph` command yet. Docker Adapter does not implement `TopologyProvider` yet.
+Runtime can build topology through its Python API. This remains an explicit second step: `scan()` does not build topology automatically. CLI `scan` still outputs only `ScanResult`, and there is no `graph` command yet. Docker Adapter does not implement `TopologyProvider` yet.
 
-Resource Graph can be built programmatically through the Python API. This is not Docker topology support yet.
+Topology is built only from adapters that implement `TopologyProvider`. This is not Docker topology support yet.
+
+```python
+from zorix_runtime import ZorixRuntime
+
+runtime = ZorixRuntime()
+runtime.load_plugins("./plugins")
+
+scan_result = runtime.scan(continue_on_error=True)
+topology_result = runtime.build_topology(
+    scan_result.resources,
+    continue_on_error=True,
+)
+```
 
 ## Project Status
 

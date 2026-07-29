@@ -1,14 +1,17 @@
 from __future__ import annotations
 
+from collections.abc import Iterator
 import unittest
 from pathlib import Path
-
+from unittest.mock import patch
 
 from zorix_core_model import Adapter, Resource
 from zorix_plugin_loader import PluginLoader
 from zorix_registry import DuplicateAdapterError, Registry
+from zorix_resource_graph import ResourceGraphBuilder
 from zorix_scan_engine import ScanStatus
 from zorix_runtime import ZorixRuntime
+from zorix_topology_engine import TopologyResult, TopologyStatus
 
 
 def _resource(resource_id: str, resource_type: str) -> Resource:
@@ -31,6 +34,25 @@ class StaticAdapter(Adapter):
 class FailingAdapter(Adapter):
     def discover(self) -> list[Resource]:
         raise RuntimeError("adapter failed")
+
+
+class CountingAdapter(Adapter):
+    def __init__(self) -> None:
+        self.discover_calls = 0
+
+    def discover(self) -> list[Resource]:
+        self.discover_calls += 1
+        return []
+
+
+class CountingResources:
+    def __init__(self, resources: list[Resource]) -> None:
+        self._resources = resources
+        self.iteration_count = 0
+
+    def __iter__(self) -> Iterator[Resource]:
+        self.iteration_count += 1
+        return iter(self._resources)
 
 
 class RecordingPluginLoader(PluginLoader):
@@ -68,6 +90,11 @@ class RuntimeTest(unittest.TestCase):
         self.assertIs(result.status, ScanStatus.SUCCESS)
         self.assertEqual(result.resources, ())
         self.assertEqual(result.errors, ())
+
+    def test_has_public_build_topology_method(self) -> None:
+        runtime = ZorixRuntime()
+
+        self.assertTrue(callable(runtime.build_topology))
 
     def test_load_plugins_delegates_loading_and_registration(self) -> None:
         adapter = StaticAdapter([_resource("service-1", "service")])
@@ -131,6 +158,91 @@ class RuntimeTest(unittest.TestCase):
 
         self.assertIs(result.status, ScanStatus.FAILED)
         self.assertEqual(len(result.errors), 1)
+
+    def test_build_topology_delegates_resources_and_returns_result(self) -> None:
+        expected_result = _topology_result()
+        resources = [_resource("service-1", "service")]
+
+        with patch("zorix_runtime.runtime.TopologyEngine") as topology_engine_class:
+            topology_engine = topology_engine_class.return_value
+            topology_engine.build.return_value = expected_result
+            runtime = ZorixRuntime()
+
+            result = runtime.build_topology(resources)
+
+        topology_engine.build.assert_called_once_with(resources, continue_on_error=False)
+        self.assertIs(result, expected_result)
+
+    def test_build_topology_does_not_iterate_resources_before_delegation(self) -> None:
+        resources = CountingResources([_resource("service-1", "service")])
+
+        with patch("zorix_runtime.runtime.TopologyEngine") as topology_engine_class:
+            topology_engine = topology_engine_class.return_value
+            runtime = ZorixRuntime()
+
+            runtime.build_topology(resources)
+
+        topology_engine.build.assert_called_once_with(resources, continue_on_error=False)
+        self.assertEqual(resources.iteration_count, 0)
+
+    def test_build_topology_passes_continue_on_error(self) -> None:
+        with patch("zorix_runtime.runtime.TopologyEngine") as topology_engine_class:
+            topology_engine = topology_engine_class.return_value
+            runtime = ZorixRuntime()
+
+            runtime.build_topology([], continue_on_error=True)
+
+        topology_engine.build.assert_called_once_with([], continue_on_error=True)
+
+    def test_build_topology_does_not_suppress_topology_engine_errors(self) -> None:
+        error = RuntimeError("topology failed")
+
+        with patch("zorix_runtime.runtime.TopologyEngine") as topology_engine_class:
+            topology_engine = topology_engine_class.return_value
+            topology_engine.build.side_effect = error
+            runtime = ZorixRuntime()
+
+            with self.assertRaises(RuntimeError) as context:
+                runtime.build_topology([])
+
+        self.assertIs(context.exception, error)
+
+    def test_build_topology_does_not_call_scan_engine_or_adapter_discover(self) -> None:
+        adapter = CountingAdapter()
+        registry = Registry()
+        registry.register(adapter)
+
+        with patch("zorix_runtime.runtime.ScanEngine") as scan_engine_class, patch(
+            "zorix_runtime.runtime.TopologyEngine"
+        ) as topology_engine_class:
+            runtime = ZorixRuntime(registry=registry)
+
+            runtime.build_topology([])
+
+        scan_engine_class.return_value.scan.assert_not_called()
+        topology_engine_class.return_value.build.assert_called_once_with(
+            [],
+            continue_on_error=False,
+        )
+        self.assertEqual(adapter.discover_calls, 0)
+
+    def test_scan_does_not_call_topology_engine(self) -> None:
+        with patch("zorix_runtime.runtime.TopologyEngine") as topology_engine_class:
+            runtime = ZorixRuntime()
+
+            runtime.scan()
+
+        topology_engine_class.return_value.build.assert_not_called()
+
+
+def _topology_result() -> TopologyResult:
+    return TopologyResult(
+        status=TopologyStatus.SUCCESS,
+        graph=ResourceGraphBuilder().build(),
+        errors=(),
+        provider_count=0,
+        successful_provider_count=0,
+    )
 
 
 if __name__ == "__main__":
