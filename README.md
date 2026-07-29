@@ -53,6 +53,7 @@ Zorix is currently in early development.
 - Topology Provider API defines an optional capability for adapters to provide directed resource relations.
 - Topology Engine builds a Resource Graph from discovered resources and optional topology providers.
 - Runtime provides a Python API for the explicit scan and topology-building workflow.
+- Presentation Layer can format both scan results and topology results through Python API.
 
 Run Docker container discovery through the example plugin:
 
@@ -78,7 +79,7 @@ Registry
        ResourceGraph
 ```
 
-Runtime can build topology through its Python API. This remains an explicit second step: `scan()` does not build topology automatically. CLI `scan` still outputs only `ScanResult`, and there is no `graph` command yet.
+Runtime can build topology through its Python API. This remains an explicit second step: `scan()` does not build topology automatically. CLI `scan` still outputs only `ScanResult`, and there is no `topology` or `graph` command yet.
 
 Topology is built only from adapters that implement `TopologyProvider`. Docker Adapter now provides Docker container-to-image and container-to-network topology through this API.
 
@@ -99,6 +100,7 @@ Docker topology through the Python Runtime API:
 
 ```python
 from zorix_runtime import ZorixRuntime
+from zorix_presentation import TopologyConsoleRenderer
 
 runtime = ZorixRuntime()
 runtime.load_plugins("./examples/plugins/docker")
@@ -106,11 +108,11 @@ runtime.load_plugins("./examples/plugins/docker")
 scan_result = runtime.scan()
 topology_result = runtime.build_topology(scan_result.resources)
 
-for relation in topology_result.graph.relations():
-    print(relation.source_id, relation.type, relation.target_id)
+text = TopologyConsoleRenderer().render(topology_result)
+print(text, end="")
 ```
 
-Current Docker support does not include Docker management, Docker Compose topology, volumes, a CLI `graph` command, or a web topology UI.
+Current Docker support does not include Docker management, Docker Compose topology, volumes, a CLI `topology` or `graph` command, or a web topology UI. A CLI topology command is planned for a later iteration; current CLI `scan` still displays only inventory.
 
 ## Project Status
 

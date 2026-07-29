@@ -1,24 +1,24 @@
 # Presentation Layer
 
-`modules/presentation` содержит независимый слой представления результатов сканирования Zorix.
+`modules/presentation` содержит независимый слой представления результатов Zorix.
 
-Presentation Layer получает уже сформированный `ScanResult` и возвращает готовый текст для терминала. Он не запускает сканирование, не загружает плагины, не регистрирует адаптеры и не разбирает аргументы командной строки.
+Presentation Layer получает уже сформированные объекты результата и преобразует их в plain-text строку для терминала. Он не запускает scan, не строит topology, не загружает plugins, не обращается к Registry и не разбирает аргументы командной строки.
 
-## Почему renderer не печатает напрямую
+## Renderer'ы
 
-`ConsoleRenderer` возвращает строку, но не вызывает `print()`.
+### ConsoleRenderer
 
-Это сохраняет разделение ответственности: renderer отвечает только за форматирование, а будущий CLI или другой вызывающий слой решает, куда отправить текст.
+`ConsoleRenderer` форматирует `ScanResult`.
 
-## Отличие от CLI
+Он выводит:
 
-CLI будет отвечать за аргументы командной строки, коды выхода, ввод-вывод и пользовательские команды.
+- статус scan;
+- количество adapters, если оно передано вызывающим кодом;
+- количество resources;
+- список resources;
+- список adapter errors.
 
-Presentation Layer отвечает только за преобразование `ScanResult` в текст.
-
-## Текстовый формат
-
-Успешный результат:
+Пример:
 
 ```text
 Status: SUCCESS
@@ -30,58 +30,97 @@ Resources:
 - Container: nginx
 ```
 
-Частичный результат:
+### TopologyConsoleRenderer
+
+`TopologyConsoleRenderer` форматирует `TopologyResult`.
+
+Он выводит:
+
+- статус topology;
+- количество providers;
+- количество successful и failed providers;
+- количество resources;
+- количество relations;
+- список relations;
+- список provider errors.
+
+Пример:
 
 ```text
-Status: PARTIAL
-Adapters: 2
-Resources: 1
-Errors: 1
+Topology: SUCCESS
+Providers: 1
+Successful providers: 1
+Failed providers: 0
+Resources: 3
+Relations: 2
 
-Resources:
-- Service: api
-
-Errors:
-- example.adapters.BrokenAdapter: RuntimeError: connection failed
+Relations:
+- Container zorix-api --uses_image--> Image zorix/api:latest
+- Container zorix-api --connected_to--> Network backend
 ```
 
-Неуспешный результат:
+## Общие правила
+
+Оба renderer'а:
+
+- возвращают строку;
+- не вызывают `print()`;
+- не завершают процесс;
+- не запускают engine;
+- не знают о CLI;
+- не изменяют переданные result, graph, resources или relations.
+
+Вызывающий слой сам решает, куда отправить строку.
+
+## Формат relations
+
+`TopologyConsoleRenderer` выводит relation в формате:
 
 ```text
-Status: FAILED
-Adapters: 2
-Resources: 0
-Errors: 2
-
-Errors:
-- example.FirstAdapter: RuntimeError: first failure
-- example.SecondAdapter: ValueError: second failure
+- <SourceType> <SourceName> --<relation_type>--> <TargetType> <TargetName>
 ```
 
-## Fallback для неизвестных ресурсов
+`relation.type` выводится как стабильный машинный идентификатор без преобразования: например, `uses_image`, `connected_to`, `depends_on`.
 
-Для типа ресурса renderer использует:
+Metadata relation в основном выводе не показывается. Для детального вывода или JSON export может быть добавлен отдельный renderer.
 
-1. непустое поле `kind`, если оно есть;
-2. поле `type` для базового `Resource`;
-3. имя класса ресурса.
+## Fallback для ресурсов в topology
 
-Для отображаемого имени renderer использует первое непустое значение:
+Для типа ресурса используется:
 
-1. `name`;
-2. `id`;
-3. `identifier`.
+1. непустое строковое `resource.type`;
+2. имя класса.
 
-Если этих полей нет, для dataclass формируется компактная строка публичных полей в порядке объявления. Для неизвестных объектов используется строковое представление, если оно информативно, иначе имя класса.
+`snake_case` и `kebab-case` типы преобразуются в Pascal-style display:
 
-## Пример использования
+- `container` -> `Container`;
+- `docker_network` -> `DockerNetwork`;
+- `load-balancer` -> `LoadBalancer`.
+
+Для имени ресурса используется:
+
+1. непустое строковое `resource.name`;
+2. непустое строковое `resource.id`;
+3. имя класса.
+
+## Пример использования ScanResult
 
 ```python
 from zorix_presentation import ConsoleRenderer
 
-renderer = ConsoleRenderer()
-text = renderer.render(result, adapter_count=len(runtime.adapters()))
+text = ConsoleRenderer().render(scan_result, adapter_count=len(runtime.adapters()))
 print(text, end="")
 ```
 
 `print()` находится снаружи renderer.
+
+## Пример использования TopologyResult
+
+```python
+from zorix_presentation import TopologyConsoleRenderer
+
+text = TopologyConsoleRenderer().render(topology_result)
+print(text, end="")
+```
+
+CLI `scan` пока использует только форматирование inventory. CLI-команда для topology будет добавлена отдельно.

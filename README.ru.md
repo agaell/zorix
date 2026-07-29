@@ -57,6 +57,7 @@ Zorix — open-source платформа для исследования, мод
 - Topology Provider API задает необязательную capability, через которую адаптеры смогут предоставлять направленные связи между ресурсами.
 - Topology Engine строит Resource Graph из уже обнаруженных ресурсов и optional topology providers.
 - Runtime предоставляет Python API для явного цикла сканирования и построения топологии.
+- Presentation Layer умеет форматировать scan results и topology results через Python API.
 
 ## Архитектурная основа
 
@@ -76,7 +77,7 @@ Registry
        ResourceGraph
 ```
 
-Runtime может строить topology через Python API. Это остается явным вторым шагом: `scan()` не строит topology автоматически. CLI `scan` по-прежнему выводит только `ScanResult`, а команды `graph` пока нет.
+Runtime может строить topology через Python API. Это остается явным вторым шагом: `scan()` не строит topology автоматически. CLI `scan` по-прежнему выводит только `ScanResult`, а команд `topology` и `graph` пока нет.
 
 Topology строится только для adapters, реализующих `TopologyProvider`. Docker Adapter теперь предоставляет Docker container-to-image и container-to-network topology через этот API.
 
@@ -97,6 +98,7 @@ Docker topology через Python Runtime API:
 
 ```python
 from zorix_runtime import ZorixRuntime
+from zorix_presentation import TopologyConsoleRenderer
 
 runtime = ZorixRuntime()
 runtime.load_plugins("./examples/plugins/docker")
@@ -104,11 +106,11 @@ runtime.load_plugins("./examples/plugins/docker")
 scan_result = runtime.scan()
 topology_result = runtime.build_topology(scan_result.resources)
 
-for relation in topology_result.graph.relations():
-    print(relation.source_id, relation.type, relation.target_id)
+text = TopologyConsoleRenderer().render(topology_result)
+print(text, end="")
 ```
 
-Текущая Docker-поддержка не включает управление Docker, Docker Compose topology, volumes, CLI-команду `graph` или web UI для topology.
+Текущая Docker-поддержка не включает управление Docker, Docker Compose topology, volumes, CLI-команду `topology` или `graph`, а также web UI для topology. CLI-команда topology будет добавлена отдельной итерацией; текущая CLI `scan` по-прежнему отображает только inventory.
 
 ## Статус проекта
 
