@@ -11,6 +11,7 @@ ROOT = Path(__file__).resolve().parents[1]
 MODULE_TEST_DIRS = [
     ROOT / "modules" / "core_model" / "tests",
     ROOT / "modules" / "docker_adapter" / "tests",
+    ROOT / "modules" / "linux_adapter" / "tests",
     ROOT / "modules" / "mock_adapter" / "tests",
     ROOT / "modules" / "plugin_loader" / "tests",
     ROOT / "modules" / "presentation" / "tests",

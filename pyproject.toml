@@ -38,6 +38,7 @@ packages = [
     "zorix",
     "zorix_core_model",
     "zorix_docker_adapter",
+    "zorix_linux_adapter",
     "zorix_mock_adapter",
     "zorix_plugin_loader",
     "zorix_presentation",
@@ -53,6 +54,7 @@ packages = [
 zorix = "src/zorix"
 zorix_core_model = "modules/core_model/src/zorix_core_model"
 zorix_docker_adapter = "modules/docker_adapter/src/zorix_docker_adapter"
+zorix_linux_adapter = "modules/linux_adapter/src/zorix_linux_adapter"
 zorix_mock_adapter = "modules/mock_adapter/src/zorix_mock_adapter"
 zorix_plugin_loader = "modules/plugin_loader/src/zorix_plugin_loader"
 zorix_presentation = "modules/presentation/src/zorix_presentation"

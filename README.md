@@ -49,16 +49,25 @@ Zorix is currently in early development.
 
 - read-only Docker Adapter discovers Docker containers, images, and networks.
 - Docker Adapter builds container `uses_image` image and container `connected_to` network relations.
+- read-only Linux Adapter discovers one SSH host and systemd services through OpenSSH.
+- Linux Adapter builds host `hosts` systemd service relations.
 - Resource Graph foundation provides a validated in-memory model for resources and directed relations.
 - Topology Provider API defines an optional capability for adapters to provide directed resource relations.
 - Topology Engine builds a Resource Graph from discovered resources and optional topology providers.
 - Runtime provides a Python API for the explicit scan and topology-building workflow.
 - Presentation Layer can format both scan results and topology results through Python API.
 
-Run Docker container discovery through the example plugin:
+Run Docker discovery through the example plugin:
 
 ```bash
 zorix scan --plugins ./examples/plugins/docker
+```
+
+Run Linux host and systemd service discovery through OpenSSH:
+
+```bash
+export ZORIX_SSH_TARGET=tandem
+zorix scan --plugins ./examples/plugins/linux
 ```
 
 ## Architecture Foundation
@@ -79,7 +88,7 @@ Registry
        ResourceGraph
 ```
 
-Runtime can build topology through its Python API. This remains an explicit second step: `scan()` does not build topology automatically. CLI `scan` still outputs only `ScanResult`, and there is no `topology` or `graph` command yet.
+Runtime can build topology through its Python API. The CLI also provides a `topology` command that performs inventory scan, builds topology, and prints both resources and relations. CLI `scan` still outputs only inventory, and there is no `graph` command yet.
 
 Topology is built only from adapters that implement `TopologyProvider`. Docker Adapter now provides Docker container-to-image and container-to-network topology through this API.
 
@@ -112,7 +121,7 @@ text = TopologyConsoleRenderer().render(topology_result)
 print(text, end="")
 ```
 
-Current Docker support does not include Docker management, Docker Compose topology, volumes, a CLI `topology` or `graph` command, or a web topology UI. A CLI topology command is planned for a later iteration; current CLI `scan` still displays only inventory.
+Current Docker support does not include Docker management, Docker Compose topology, volumes, a CLI `graph` command, or a web topology UI. Current Linux support does not include systemd management, journal logs, processes, disks, ports, metrics, sudo, or multiple hosts in one adapter. Current CLI `scan` still displays only inventory.
 
 ## Project Status
 
@@ -159,10 +168,57 @@ Continue scanning remaining adapters after adapter errors:
 zorix scan --plugins ./plugins --continue-on-error
 ```
 
+Build topology through the CLI:
+
+```bash
+zorix topology --plugins ./examples/plugins/docker
+```
+
+Continue both inventory scan and topology building after adapter or provider errors:
+
+```bash
+zorix topology \
+  --plugins ./examples/plugins/docker \
+  --continue-on-error
+```
+
+`zorix topology`:
+
+- runs an inventory scan;
+- builds topology from discovered resources;
+- prints resources;
+- prints relations.
+
+Example output:
+
+```text
+Status: SUCCESS
+Adapters: 1
+Resources: 3
+
+Resources:
+- Container: zorix-api
+- Image: zorix/api:latest
+- Network: backend
+
+Topology: SUCCESS
+Providers: 1
+Successful providers: 1
+Failed providers: 0
+Resources: 3
+Relations: 2
+
+Relations:
+- Container zorix-api --uses_image--> Image zorix/api:latest
+- Container zorix-api --connected_to--> Network backend
+```
+
+Docker CLI is required only when using the Docker plugin. Commands are read-only: the CLI does not manage resources. Relation metadata is not shown in plain-text output yet, and JSON/YAML export is not implemented.
+
 Exit codes:
 
 - `0` — `SUCCESS`
 - `1` — execution error
 - `2` — usage error
-- `3` — `PARTIAL`
-- `4` — `FAILED`
+- `3` — `PARTIAL` workflow
+- `4` — `FAILED` workflow

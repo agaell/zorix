@@ -53,6 +53,8 @@ Zorix — open-source платформа для исследования, мод
 
 - read-only Docker Adapter обнаруживает Docker containers, images и networks;
 - Docker Adapter строит связи container `uses_image` image и container `connected_to` network;
+- read-only Linux Adapter обнаруживает один SSH host и systemd services через OpenSSH;
+- Linux Adapter строит связи host `hosts` systemd service;
 - фундамент Resource Graph предоставляет валидированную in-memory модель ресурсов и направленных связей.
 - Topology Provider API задает необязательную capability, через которую адаптеры смогут предоставлять направленные связи между ресурсами.
 - Topology Engine строит Resource Graph из уже обнаруженных ресурсов и optional topology providers.
@@ -77,7 +79,7 @@ Registry
        ResourceGraph
 ```
 
-Runtime может строить topology через Python API. Это остается явным вторым шагом: `scan()` не строит topology автоматически. CLI `scan` по-прежнему выводит только `ScanResult`, а команд `topology` и `graph` пока нет.
+Runtime может строить topology через Python API. CLI также предоставляет команду `topology`, которая выполняет inventory scan, строит topology и выводит resources вместе с relations. CLI `scan` по-прежнему выводит только inventory, а команды `graph` пока нет.
 
 Topology строится только для adapters, реализующих `TopologyProvider`. Docker Adapter теперь предоставляет Docker container-to-image и container-to-network topology через этот API.
 
@@ -110,7 +112,16 @@ text = TopologyConsoleRenderer().render(topology_result)
 print(text, end="")
 ```
 
-Текущая Docker-поддержка не включает управление Docker, Docker Compose topology, volumes, CLI-команду `topology` или `graph`, а также web UI для topology. CLI-команда topology будет добавлена отдельной итерацией; текущая CLI `scan` по-прежнему отображает только inventory.
+Текущая Docker-поддержка не включает управление Docker, Docker Compose topology, volumes, CLI-команду `graph`, а также web UI для topology. Текущая CLI `scan` по-прежнему отображает только inventory.
+
+Linux host и systemd services можно обнаружить через OpenSSH:
+
+```bash
+export ZORIX_SSH_TARGET=tandem
+zorix scan --plugins ./examples/plugins/linux
+```
+
+Текущая Linux-поддержка не включает управление systemd, journal logs, процессы, диски, порты, metrics, sudo или несколько hosts в одном adapter.
 
 ## Статус проекта
 
@@ -125,3 +136,89 @@ print(text, end="")
 ```bash
 git clone https://github.com/agaell/zorix.git
 cd zorix
+```
+
+Настройте editable installation:
+
+```bash
+python3 -m venv .venv
+source .venv/bin/activate
+python -m pip install --upgrade pip
+python -m pip install -e .
+python -m unittest discover
+```
+
+## CLI
+
+Показать установленную версию Zorix:
+
+```bash
+zorix --version
+```
+
+Запустить inventory scan с адаптерами из директории plugins:
+
+```bash
+zorix scan --plugins ./plugins
+```
+
+Продолжать scan после ошибок отдельных adapters:
+
+```bash
+zorix scan --plugins ./plugins --continue-on-error
+```
+
+Построить topology через CLI:
+
+```bash
+zorix topology --plugins ./examples/plugins/docker
+```
+
+Продолжать inventory scan и topology building после ошибок adapters или providers:
+
+```bash
+zorix topology \
+  --plugins ./examples/plugins/docker \
+  --continue-on-error
+```
+
+`zorix topology`:
+
+- выполняет inventory scan;
+- строит topology по обнаруженным resources;
+- выводит resources;
+- выводит relations.
+
+Пример вывода:
+
+```text
+Status: SUCCESS
+Adapters: 1
+Resources: 3
+
+Resources:
+- Container: zorix-api
+- Image: zorix/api:latest
+- Network: backend
+
+Topology: SUCCESS
+Providers: 1
+Successful providers: 1
+Failed providers: 0
+Resources: 3
+Relations: 2
+
+Relations:
+- Container zorix-api --uses_image--> Image zorix/api:latest
+- Container zorix-api --connected_to--> Network backend
+```
+
+Docker CLI требуется только при использовании Docker plugin. Команды read-only: CLI не управляет ресурсами. Relation metadata в plain-text выводе пока не показывается, JSON/YAML export пока отсутствует.
+
+Exit codes:
+
+- `0` — `SUCCESS`
+- `1` — execution error
+- `2` — usage error
+- `3` — `PARTIAL` workflow
+- `4` — `FAILED` workflow
