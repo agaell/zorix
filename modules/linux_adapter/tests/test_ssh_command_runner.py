@@ -65,7 +65,23 @@ class SubprocessSshCommandRunnerTest(unittest.TestCase):
             text=True,
             shell=False,
             timeout=12.5,
+            input=None,
         )
+
+    def test_input_text_is_passed_to_subprocess(self) -> None:
+        runner = SubprocessSshCommandRunner()
+        completed = subprocess.CompletedProcess(
+            args=["ssh"],
+            returncode=0,
+            stdout="ok\n",
+            stderr="",
+        )
+
+        with patch("zorix_linux_adapter.command.subprocess.run", return_value=completed) as run:
+            result = runner.run("target", ("sh", "-s"), input_text="script body")
+
+        self.assertEqual(result, "ok\n")
+        self.assertEqual(run.call_args.kwargs["input"], "script body")
 
     def test_stdout_is_returned_without_printing(self) -> None:
         runner = SubprocessSshCommandRunner()
@@ -108,6 +124,22 @@ class SubprocessSshCommandRunnerTest(unittest.TestCase):
             str(error),
             "SSH command failed for target with exit code 255: permission denied",
         )
+
+    def test_non_zero_snapshot_command_error_does_not_include_script(self) -> None:
+        runner = SubprocessSshCommandRunner()
+        completed = subprocess.CompletedProcess(
+            args=["ssh"],
+            returncode=1,
+            stdout="",
+            stderr="failed\n",
+        )
+
+        with patch("zorix_linux_adapter.command.subprocess.run", return_value=completed):
+            with self.assertRaises(SshCommandError) as context:
+                runner.run("target", ("sh", "-s"), input_text="secret script")
+
+        self.assertEqual(context.exception.command, ("sh", "-s"))
+        self.assertNotIn("secret script", str(context.exception))
 
     def test_empty_stderr_command_error_message_has_no_colon(self) -> None:
         runner = SubprocessSshCommandRunner()

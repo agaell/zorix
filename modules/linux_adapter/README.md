@@ -43,7 +43,15 @@ zorix scan --plugins ./examples/plugins/linux
 
 ## Read-only команды
 
-Адаптер выполняет только фиксированный набор remote-команд:
+`discover()` выполняет один SSH-запуск на target:
+
+```text
+ssh -o BatchMode=yes -o ConnectTimeout=<seconds> <target> sh -s
+```
+
+Статический POSIX `sh` script передаётся в stdin. Script не формируется из пользовательского ввода и не содержит `sudo`, временных файлов, package managers, `curl`, `wget` или произвольных remote-команд.
+
+Внутри script выполняется только фиксированный набор read-only команд:
 
 ```text
 env LC_ALL=C hostname
@@ -56,6 +64,29 @@ env LC_ALL=C df -B1 --output=source,fstype,size,used,avail,pcent,target
 env LC_ALL=C ss --no-header --listening --tcp --udp --numeric
 ```
 
+Каждая команда оборачивается в snapshot section с маркерами:
+
+```text
+__ZORIX_SNAPSHOT_V1_BEGIN__:<section>
+...
+__ZORIX_SNAPSHOT_V1_END__:<section>
+```
+
+Секции идут в стабильном порядке:
+
+```text
+hostname
+kernel
+architecture
+os_release
+services
+meminfo
+filesystems
+sockets
+```
+
+Если одна из команд завершилась с ненулевым exit code, remote script останавливается, а `SubprocessSshCommandRunner` возвращает typed `SshCommandError` для remote command `("sh", "-s")`.
+
 SSH запускается через `subprocess.run(..., shell=False)` с:
 
 ```text
@@ -63,7 +94,9 @@ SSH запускается через `subprocess.run(..., shell=False)` с:
 -o ConnectTimeout=<seconds>
 ```
 
-Адаптер не использует `sudo`, shell pipelines, redirects, password input или произвольные команды пользователя.
+Snapshot не кэшируется: каждый вызов `discover()` собирает актуальное состояние через один новый SSH subprocess.
+
+Parser snapshot требует все секции ровно по одному разу. Malformed snapshot приводит к `LinuxOutputError` с коротким сообщением без полного stdout.
 
 ## Host Resource
 

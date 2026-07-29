@@ -9,7 +9,13 @@ from zorix_topology_api import TopologyContext, TopologyProvider
 
 
 class FailingRunner:
-    def run(self, target: str, arguments: tuple[str, ...]) -> str:
+    def run(
+        self,
+        target: str,
+        arguments: tuple[str, ...],
+        *,
+        input_text: str | None = None,
+    ) -> str:
         raise AssertionError("SSH must not be called")
 
 

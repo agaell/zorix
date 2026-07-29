@@ -21,9 +21,17 @@ class FakeSshCommandRunner:
     def __init__(self, *outputs: str) -> None:
         self._outputs = list(outputs)
         self.calls: list[tuple[str, tuple[str, ...]]] = []
+        self.input_texts: list[str | None] = []
 
-    def run(self, target: str, arguments: tuple[str, ...]) -> str:
+    def run(
+        self,
+        target: str,
+        arguments: tuple[str, ...],
+        *,
+        input_text: str | None = None,
+    ) -> str:
         self.calls.append((target, tuple(arguments)))
+        self.input_texts.append(input_text)
         if not self._outputs:
             raise AssertionError("unexpected SSH command")
 
@@ -33,27 +41,29 @@ class FakeSshCommandRunner:
 class LinuxIntegrationTest(unittest.TestCase):
     def test_scan_resources_can_build_linux_topology_graph(self) -> None:
         runner = FakeSshCommandRunner(
-            "tandem-server\n",
-            "6.8.0\n",
-            "x86_64\n",
-            'ID=ubuntu\nPRETTY_NAME="Ubuntu 24.04 LTS"\nVERSION_ID="24.04"\n',
-            (
-                "nginx.service loaded active running Nginx\n"
-                "tandem.service loaded active running Tandem\n"
-                "postgresql.service loaded active running PostgreSQL\n"
-            ),
-            (
-                "MemTotal:       8192000 kB\n"
-                "MemAvailable:   4096000 kB\n"
-                "SwapTotal:      2097152 kB\n"
-                "SwapFree:       1048576 kB\n"
-            ),
-            "/dev/vda1 ext4 50000000000 20000000000 30000000000 40% /\n",
-            (
-                "tcp LISTEN 0 511 0.0.0.0:80 0.0.0.0:*\n"
-                "tcp LISTEN 0 511 0.0.0.0:443 0.0.0.0:*\n"
-                "tcp LISTEN 0 128 127.0.0.1:5432 0.0.0.0:*\n"
-            ),
+            _snapshot(
+                hostname="tandem-server\n",
+                kernel="6.8.0\n",
+                architecture="x86_64\n",
+                os_release='ID=ubuntu\nPRETTY_NAME="Ubuntu 24.04 LTS"\nVERSION_ID="24.04"\n',
+                services=(
+                    "nginx.service loaded active running Nginx\n"
+                    "tandem.service loaded active running Tandem\n"
+                    "postgresql.service loaded active running PostgreSQL\n"
+                ),
+                meminfo=(
+                    "MemTotal:       8192000 kB\n"
+                    "MemAvailable:   4096000 kB\n"
+                    "SwapTotal:      2097152 kB\n"
+                    "SwapFree:       1048576 kB\n"
+                ),
+                filesystems="/dev/vda1 ext4 50000000000 20000000000 30000000000 40% /\n",
+                sockets=(
+                    "tcp LISTEN 0 511 0.0.0.0:80 0.0.0.0:*\n"
+                    "tcp LISTEN 0 511 0.0.0.0:443 0.0.0.0:*\n"
+                    "tcp LISTEN 0 128 127.0.0.1:5432 0.0.0.0:*\n"
+                ),
+            )
         )
         adapter = LinuxAdapter("tandem", runner)
         registry = Registry()
@@ -68,6 +78,7 @@ class LinuxIntegrationTest(unittest.TestCase):
 
         self.assertIs(scan_result.status, ScanStatus.SUCCESS)
         self.assertEqual(len(scan_result.resources), 9)
+        self.assertEqual(runner.calls, [("tandem", ("sh", "-s"))])
         self.assertEqual(sum(1 for resource in scan_result.resources if resource.type == "host"), 1)
         self.assertEqual(sum(1 for resource in scan_result.resources if resource.type == "service"), 3)
         self.assertEqual(sum(1 for resource in scan_result.resources if resource.type == "memory"), 1)
@@ -142,6 +153,39 @@ class LinuxPluginLoaderIntegrationTest(unittest.TestCase):
         self.assertNotIn("def discover", plugin_text)
         self.assertNotIn("def discover_relations", plugin_text)
         self.assertIn("Adapter = ConfiguredLinuxAdapter", plugin_text)
+
+
+def _snapshot(
+    *,
+    hostname: str,
+    kernel: str,
+    architecture: str,
+    os_release: str,
+    services: str,
+    meminfo: str,
+    filesystems: str,
+    sockets: str,
+) -> str:
+    return "".join(
+        (
+            _section("hostname", hostname),
+            _section("kernel", kernel),
+            _section("architecture", architecture),
+            _section("os_release", os_release),
+            _section("services", services),
+            _section("meminfo", meminfo),
+            _section("filesystems", filesystems),
+            _section("sockets", sockets),
+        )
+    )
+
+
+def _section(name: str, content: str) -> str:
+    return (
+        f"__ZORIX_SNAPSHOT_V1_BEGIN__:{name}\n"
+        f"{content}"
+        f"\n__ZORIX_SNAPSHOT_V1_END__:{name}\n"
+    )
 
 
 if __name__ == "__main__":

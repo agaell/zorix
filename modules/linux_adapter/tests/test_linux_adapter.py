@@ -5,51 +5,24 @@ from unittest.mock import patch
 
 from zorix_core_model import Resource
 from zorix_linux_adapter import LinuxAdapter, LinuxOutputError
-
-
-HOSTNAME_ARGS = ("env", "LC_ALL=C", "hostname")
-KERNEL_ARGS = ("env", "LC_ALL=C", "uname", "-r")
-ARCH_ARGS = ("env", "LC_ALL=C", "uname", "-m")
-OS_RELEASE_ARGS = ("env", "LC_ALL=C", "cat", "/etc/os-release")
-SYSTEMCTL_ARGS = (
-    "env",
-    "LC_ALL=C",
-    "systemctl",
-    "list-units",
-    "--type=service",
-    "--all",
-    "--no-legend",
-    "--no-pager",
-    "--plain",
-    "--full",
-)
-MEMINFO_ARGS = ("env", "LC_ALL=C", "cat", "/proc/meminfo")
-FILESYSTEMS_ARGS = (
-    "env",
-    "LC_ALL=C",
-    "df",
-    "-B1",
-    "--output=source,fstype,size,used,avail,pcent,target",
-)
-SOCKETS_ARGS = (
-    "env",
-    "LC_ALL=C",
-    "ss",
-    "--no-header",
-    "--listening",
-    "--tcp",
-    "--udp",
-    "--numeric",
-)
+from zorix_linux_adapter.snapshot import STATIC_SNAPSHOT_SCRIPT
 
 
 class FakeSshCommandRunner:
     def __init__(self, *outputs: str | BaseException) -> None:
         self._outputs = list(outputs)
         self.calls: list[tuple[str, tuple[str, ...]]] = []
+        self.input_texts: list[str | None] = []
 
-    def run(self, target: str, arguments: tuple[str, ...]) -> str:
+    def run(
+        self,
+        target: str,
+        arguments: tuple[str, ...],
+        *,
+        input_text: str | None = None,
+    ) -> str:
         self.calls.append((target, tuple(arguments)))
+        self.input_texts.append(input_text)
         if not self._outputs:
             raise AssertionError("unexpected SSH command")
 
@@ -66,24 +39,15 @@ class FalseySshCommandRunner(FakeSshCommandRunner):
 
 
 class LinuxAdapterTest(unittest.TestCase):
-    def test_discover_calls_commands_in_exact_order(self) -> None:
+    def test_discover_calls_single_snapshot_command(self) -> None:
         runner = _runner()
 
         LinuxAdapter("tandem", runner).discover()
 
-        self.assertEqual(
-            runner.calls,
-            [
-                ("tandem", HOSTNAME_ARGS),
-                ("tandem", KERNEL_ARGS),
-                ("tandem", ARCH_ARGS),
-                ("tandem", OS_RELEASE_ARGS),
-                ("tandem", SYSTEMCTL_ARGS),
-                ("tandem", MEMINFO_ARGS),
-                ("tandem", FILESYSTEMS_ARGS),
-                ("tandem", SOCKETS_ARGS),
-            ],
-        )
+        self.assertEqual(runner.calls, [("tandem", ("sh", "-s"))])
+        self.assertEqual(runner.input_texts, [STATIC_SNAPSHOT_SCRIPT])
+        self.assertIn("run_section hostname env LC_ALL=C hostname", STATIC_SNAPSHOT_SCRIPT)
+        self.assertIn("run_section sockets env LC_ALL=C ss", STATIC_SNAPSHOT_SCRIPT)
 
     def test_host_resource_mapping(self) -> None:
         resources = LinuxAdapter("tandem", _runner()).discover()
@@ -177,7 +141,7 @@ class LinuxAdapterTest(unittest.TestCase):
 
     def test_new_command_error_is_propagated(self) -> None:
         error = RuntimeError("df failed")
-        runner = FakeSshCommandRunner(*_outputs()[:6], error)
+        runner = FakeSshCommandRunner(error)
 
         with self.assertRaises(RuntimeError) as context:
             LinuxAdapter("tandem", runner).discover()
@@ -221,7 +185,7 @@ def _runner(
     sockets: str | None = None,
 ) -> FakeSshCommandRunner:
     return FakeSshCommandRunner(
-        *_outputs(
+        _snapshot(
             hostname=hostname,
             services=services,
             meminfo=meminfo,
@@ -231,14 +195,14 @@ def _runner(
     )
 
 
-def _outputs(
+def _snapshot(
     *,
     hostname: str = "tandem-server\n",
     services: str | None = None,
     meminfo: str | None = None,
     filesystems: str | None = None,
     sockets: str | None = None,
-) -> tuple[str, ...]:
+) -> str:
     if services is None:
         services = (
             "nginx.service loaded active running A web server\n"
@@ -251,15 +215,32 @@ def _outputs(
     if sockets is None:
         sockets = "tcp LISTEN 0 511 0.0.0.0:443 0.0.0.0:*\n"
 
+    return "".join(
+        (
+            _section("hostname", hostname),
+            _section("kernel", "6.8.0\n"),
+            _section("architecture", "x86_64\n"),
+            _section(
+                "os_release",
+                'ID=ubuntu\nNAME="Ubuntu"\nPRETTY_NAME="Ubuntu 24.04 LTS"\nVERSION_ID="24.04"\n',
+            ),
+            _section("services", services),
+            _section("meminfo", meminfo),
+            _section("filesystems", filesystems),
+            _section("sockets", sockets),
+        )
+    )
+
+
+def _outputs() -> tuple[str, str]:
+    return (_snapshot(), _snapshot())
+
+
+def _section(name: str, content: str) -> str:
     return (
-        hostname,
-        "6.8.0\n",
-        "x86_64\n",
-        'ID=ubuntu\nNAME="Ubuntu"\nPRETTY_NAME="Ubuntu 24.04 LTS"\nVERSION_ID="24.04"\n',
-        services,
-        meminfo,
-        filesystems,
-        sockets,
+        f"__ZORIX_SNAPSHOT_V1_BEGIN__:{name}\n"
+        f"{content}"
+        f"\n__ZORIX_SNAPSHOT_V1_END__:{name}\n"
     )
 
 

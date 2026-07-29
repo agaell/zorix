@@ -16,6 +16,8 @@ class SshCommandRunner(Protocol):
         self,
         target: str,
         arguments: Sequence[str],
+        *,
+        input_text: str | None = None,
     ) -> str:
         ...
 
@@ -45,7 +47,13 @@ class SubprocessSshCommandRunner:
         self.connect_timeout_seconds = connect_timeout_seconds
         self.command_timeout_seconds = float(command_timeout_seconds)
 
-    def run(self, target: str, arguments: Sequence[str]) -> str:
+    def run(
+        self,
+        target: str,
+        arguments: Sequence[str],
+        *,
+        input_text: str | None = None,
+    ) -> str:
         remote_arguments = tuple(arguments)
         command = (
             self.executable,
@@ -64,6 +72,7 @@ class SubprocessSshCommandRunner:
                 text=True,
                 shell=False,
                 timeout=self.command_timeout_seconds,
+                input=input_text,
             )
         except FileNotFoundError as exc:
             raise SshExecutableNotFoundError(self.executable) from exc
