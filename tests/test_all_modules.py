@@ -18,6 +18,7 @@ MODULE_TEST_DIRS = [
     ROOT / "modules" / "resource_graph" / "tests",
     ROOT / "modules" / "scan_engine" / "tests",
     ROOT / "modules" / "runtime" / "tests",
+    ROOT / "modules" / "topology_api" / "tests",
 ]
 
 

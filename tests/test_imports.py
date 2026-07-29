@@ -10,6 +10,7 @@ import zorix_registry
 import zorix_resource_graph
 import zorix_scan_engine
 import zorix_runtime
+import zorix_topology_api
 from zorix_core_model import Adapter, Event, Resource, Tool, Workflow
 
 
@@ -25,6 +26,7 @@ class PackagingImportTest(unittest.TestCase):
         self.assertTrue(zorix_resource_graph)
         self.assertTrue(zorix_scan_engine)
         self.assertTrue(zorix_runtime)
+        self.assertTrue(zorix_topology_api)
 
     def test_core_model_exports_import(self) -> None:
         self.assertTrue(Adapter)

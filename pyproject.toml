@@ -45,6 +45,7 @@ packages = [
     "zorix_resource_graph",
     "zorix_scan_engine",
     "zorix_runtime",
+    "zorix_topology_api",
 ]
 
 [tool.setuptools.package-dir]
@@ -58,3 +59,4 @@ zorix_registry = "modules/registry/src/zorix_registry"
 zorix_resource_graph = "modules/resource_graph/src/zorix_resource_graph"
 zorix_scan_engine = "modules/scan_engine/src/zorix_scan_engine"
 zorix_runtime = "modules/runtime/src/zorix_runtime"
+zorix_topology_api = "modules/topology_api/src/zorix_topology_api"
