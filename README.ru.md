@@ -56,12 +56,14 @@ Zorix — open-source платформа для исследования, мод
 - read-only Linux Adapter обнаруживает один SSH host, systemd services, system memory, persistent filesystems и listening TCP/UDP sockets через OpenSSH;
 - Linux Adapter строит связи host `hosts` service, `has_memory`, `mounts` и `listens_on`;
 - Linux Adapter выполняет базовую read-only health evaluation по уже обнаруженным resources;
+- Linux Adapter формирует dry-run action plans для systemd service start, stop и restart;
 - фундамент Resource Graph предоставляет валидированную in-memory модель ресурсов и направленных связей.
 - Topology Provider API задает необязательную capability, через которую адаптеры смогут предоставлять направленные связи между ресурсами.
 - Topology Engine строит Resource Graph из уже обнаруженных ресурсов и optional topology providers.
 - Health Model, Health API и Health Engine добавляют read-only вертикальный срез health evaluation.
+- Action Model, Action API и Action Engine добавляют read-only safe action planning.
 - Runtime предоставляет Python API для явного цикла сканирования и построения топологии.
-- Presentation Layer умеет форматировать scan results, topology results и health results через Python API.
+- Presentation Layer умеет форматировать scan results, topology results, health results и action planning results через Python API.
 
 ## Архитектурная основа
 
@@ -77,6 +79,9 @@ Registry
     ├── HealthEngine
     │       ↓
     │   HealthResult
+    ├── ActionEngine
+    │       ↓
+    │   ActionPlanResult
     └── TopologyEngine
             ↓
        TopologyResult
@@ -84,7 +89,7 @@ Registry
        ResourceGraph
 ```
 
-Runtime может строить topology и выполнять health evaluation через Python API. CLI также предоставляет команды `topology` и `health`. CLI `scan` по-прежнему выводит только inventory, а команды `graph` пока нет.
+Runtime может строить topology, выполнять health evaluation и планировать actions через Python API. CLI также предоставляет команды `topology`, `health` и `action plan`. CLI `scan` по-прежнему выводит только inventory, а команды `graph` пока нет.
 
 Topology строится только для adapters, реализующих `TopologyProvider`. Docker Adapter теперь предоставляет Docker container-to-image и container-to-network topology через этот API.
 
@@ -133,7 +138,17 @@ export ZORIX_SSH_TARGET=tandem
 zorix health --plugins ./examples/plugins/linux
 ```
 
-Текущая Linux-поддержка не включает управление systemd, journal logs, process ownership для sockets, public port accessibility, firewall analysis, настраиваемые health thresholds, CPU load, sudo или несколько hosts в одном adapter.
+Dry-run планирование Linux action:
+
+```bash
+export ZORIX_SSH_TARGET=tandem
+zorix action plan \
+  service.restart \
+  linux:service:tandem:tandem.service \
+  --plugins ./examples/plugins/linux
+```
+
+Текущая Linux-поддержка не выполняет systemd actions, не включает confirmation prompts, journal logs, process ownership для sockets, public port accessibility, firewall analysis, настраиваемые health thresholds, CPU load, sudo или несколько hosts в одном adapter.
 
 ## Статус проекта
 
@@ -209,6 +224,25 @@ zorix health --plugins ./examples/plugins/linux
 
 Linux health MVP считает failed services critical, filesystem usage `>=80` warning, filesystem usage `>=90` critical, available memory `<=20%` warning и available memory `<=10%` critical. Inactive services и sockets в этой итерации findings не создают.
 
+Создать dry-run action plan:
+
+```bash
+zorix action plan \
+  service.restart \
+  linux:service:tandem:tandem.service \
+  --plugins ./examples/plugins/linux
+```
+
+`zorix action plan`:
+
+- выполняет inventory scan;
+- находит запрошенный resource;
+- запрашивает dry-run plan у action provider;
+- показывает operation, risk, необходимость подтверждения и steps;
+- не выполняет `systemctl`, SSH mutation commands, arbitrary shell commands или изменения на сервере.
+
+Linux action planning MVP поддерживает только `service.start`, `service.stop` и `service.restart` для systemd service resources. `service.stop` имеет risk `HIGH`; `service.start` и `service.restart` имеют risk `MEDIUM`. Реальное выполнение actions пока не реализовано.
+
 `zorix topology`:
 
 - выполняет inventory scan;
@@ -248,4 +282,4 @@ Exit codes:
 - `1` — execution error
 - `2` — usage error
 - `3` — `PARTIAL` workflow или warning health
-- `4` — `FAILED` workflow или critical health
+- `4` — `FAILED` workflow, critical health или rejected action plan

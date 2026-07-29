@@ -5,9 +5,15 @@ from pathlib import Path
 import unittest
 from unittest.mock import patch
 
+from zorix_action_engine import ActionEngine
+from zorix_action_model import ActionRequest
 from zorix_linux_adapter import LinuxAdapter, LinuxConfigurationError
 from zorix_health_engine import HealthEngine
-from zorix_presentation import HealthConsoleRenderer, TopologyConsoleRenderer
+from zorix_presentation import (
+    ActionPlanConsoleRenderer,
+    HealthConsoleRenderer,
+    TopologyConsoleRenderer,
+)
 from zorix_plugin_loader import PluginLoader
 from zorix_registry import Registry
 from zorix_scan_engine import ScanEngine, ScanStatus
@@ -174,6 +180,41 @@ class LinuxIntegrationTest(unittest.TestCase):
             "[linux:filesystem:tandem:%2F]\n",
             rendered,
         )
+
+    def test_scan_resources_can_plan_linux_action_without_second_ssh_call(self) -> None:
+        runner = FakeSshCommandRunner(
+            _snapshot(
+                hostname="tandem-server\n",
+                kernel="6.8.0\n",
+                architecture="x86_64\n",
+                os_release='ID=ubuntu\nPRETTY_NAME="Ubuntu 24.04 LTS"\nVERSION_ID="24.04"\n',
+                services="tandem.service loaded active running Tandem\n",
+                meminfo="MemTotal:       8192000 kB\nMemAvailable:   4096000 kB\n",
+                filesystems="/dev/vda1 ext4 100 20 80 20% /\n",
+                sockets="tcp LISTEN 0 511 0.0.0.0:443 0.0.0.0:*\n",
+            )
+        )
+        adapter = LinuxAdapter("tandem", runner)
+        registry = Registry()
+        registry.register(adapter)
+
+        scan_result = ScanEngine(registry).scan()
+        ssh_calls_after_scan = list(runner.calls)
+        action_result = ActionEngine(registry).plan(
+            scan_result.resources,
+            ActionRequest(
+                "service.restart",
+                "linux:service:tandem:tandem.service",
+            ),
+        )
+        rendered = ActionPlanConsoleRenderer().render(action_result)
+
+        self.assertEqual(runner.calls, ssh_calls_after_scan)
+        self.assertIn("Action planning: READY\n", rendered)
+        self.assertIn("Dry run: yes\n", rendered)
+        self.assertIn("Operation: linux.systemd.restart\n", rendered)
+        self.assertIn("Risk: MEDIUM\n", rendered)
+        self.assertIn("Confirmation required: yes\n", rendered)
 
 
 class LinuxPluginLoaderIntegrationTest(unittest.TestCase):

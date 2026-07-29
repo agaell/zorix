@@ -1,6 +1,6 @@
 # Runtime
 
-`modules/runtime` содержит прикладной слой, который собирает `PluginLoader`, `Registry`, `ScanEngine` и `TopologyEngine` в единую рабочую цепочку Zorix.
+`modules/runtime` содержит прикладной слой, который собирает `PluginLoader`, `Registry`, `ScanEngine`, `TopologyEngine`, `HealthEngine` и `ActionEngine` в единую рабочую цепочку Zorix.
 
 Runtime не добавляет новую архитектурную модель. Он только связывает уже существующие компоненты.
 
@@ -13,6 +13,8 @@ Runtime не добавляет новую архитектурную модел
 - регистрацию загруженных адаптеров в `Registry`;
 - запуск сканирования через `ScanEngine`;
 - построение топологии уже обнаруженных ресурсов через `TopologyEngine`;
+- health evaluation уже обнаруженных ресурсов через `HealthEngine`;
+- dry-run планирование действий через `ActionEngine`;
 - очистку зарегистрированных адаптеров.
 
 ## Схема
@@ -22,15 +24,15 @@ Runtime не добавляет новую архитектурную модел
                       |
                       v
                    Registry
-                   /      \
-                  v        v
-           ScanEngine  TopologyEngine
-               |            |
-               v            v
-          ScanResult   TopologyResult
-                                |
-                                v
-                         ResourceGraph
+              /      |        |        \
+             v       v        v         v
+      ScanEngine ActionEngine HealthEngine TopologyEngine
+          |          |           |             |
+          v          v           v             v
+     ScanResult ActionPlanResult HealthResult TopologyResult
+                                               |
+                                               v
+                                        ResourceGraph
 ```
 
 `PluginLoader` загружает адаптеры из каталога.
@@ -41,7 +43,9 @@ Runtime не добавляет новую архитектурную модел
 
 `TopologyEngine` использует тот же экземпляр `Registry`: он видит адаптеры, которые структурно реализуют `TopologyProvider`, и строит `TopologyResult` из уже переданных ресурсов.
 
-`Runtime` связывает загрузку, регистрацию, сканирование и построение топологии.
+`HealthEngine` и `ActionEngine` также используют тот же `Registry`, но работают только с уже переданными resources. `plan_action()` возвращает dry-run plan и не выполняет инфраструктурное действие.
+
+`Runtime` связывает загрузку, регистрацию, сканирование, health evaluation, action planning и построение топологии.
 
 `Presentation Layer` преобразует готовый `ScanResult` в текст для CLI вне границ Runtime.
 
@@ -56,12 +60,13 @@ topology_result = runtime.build_topology(
     scan_result.resources,
     continue_on_error=True,
 )
+action_result = runtime.plan_action(scan_result.resources, request)
 
 for relation in topology_result.graph.relations():
     print(relation.source_id, relation.type, relation.target_id)
 ```
 
-`build_topology()` не запускает `scan()` автоматически и не вызывает `discover()` повторно. Сканирование и построение топологии остаются двумя явными этапами.
+`build_topology()`, `evaluate_health()` и `plan_action()` не запускают `scan()` автоматически и не вызывают `discover()` повторно. Сканирование, evaluation, planning и построение топологии остаются явными этапами.
 
 ## Границы ответственности
 
@@ -72,13 +77,15 @@ Runtime не должен:
 - самостоятельно вызывать `discover()` у адаптеров;
 - самостоятельно создавать `TopologyContext` или `ResourceGraph`;
 - находить topology providers или обрабатывать их результаты;
+- выполнять action plan;
+- выполнять SSH, systemctl или shell-команды изменения состояния;
 - форматировать вывод для терминала;
 - читать конфигурационные файлы;
 - знать конкретные реализации адаптеров.
 
 ## Ошибки и дубликаты
 
-`ZorixRuntime` не подавляет ошибки `PluginLoader`, `Registry`, `ScanEngine` или `TopologyEngine`.
+`ZorixRuntime` не подавляет ошибки `PluginLoader`, `Registry`, `ScanEngine`, `TopologyEngine`, `HealthEngine` или `ActionEngine`.
 
 Если один и тот же класс адаптера загружается повторно, `Registry` выбрасывает `DuplicateAdapterError`, а Runtime передает это исключение вызывающему коду.
 
@@ -86,4 +93,6 @@ Runtime не должен:
 
 `build_topology()` сохраняет семантику `TopologyEngine`: в режиме fail-fast исходная ошибка provider или построения графа передается вызывающему коду; при `continue_on_error=True` ошибки отдельных topology providers включаются в `TopologyResult`, а остальные providers продолжают работу.
 
-`clear()` очищает общий `Registry`. После этого `scan()` не видит адаптеров, а `build_topology(resources)` строит граф только из переданных ресурсов, без relations от ранее загруженных providers.
+`plan_action()` возвращает `ActionPlanResult`: `READY` для валидного dry-run плана или `REJECTED` для отсутствующего ресурса/unsupported action. Provider exceptions не скрываются.
+
+`clear()` очищает общий `Registry`. После этого `scan()` не видит адаптеров, `build_topology(resources)` строит граф только из переданных ресурсов, а `evaluate_health()` и `plan_action()` не видят providers.

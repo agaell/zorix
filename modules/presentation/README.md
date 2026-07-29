@@ -94,6 +94,43 @@ Findings:
 
 Metadata findings в plain-text выводе не показывается.
 
+### ActionPlanConsoleRenderer
+
+`ActionPlanConsoleRenderer` форматирует `ActionPlanResult`.
+
+Он выводит dry-run результат планирования действия:
+
+- статус планирования;
+- action и target resource;
+- provider;
+- operation token;
+- risk;
+- необходимость будущего подтверждения;
+- summary;
+- шаги плана.
+
+Renderer не показывает metadata и не выполняет action.
+
+Пример:
+
+```text
+Action planning: READY
+Dry run: yes
+Action: service.restart
+Resource: tandem.service
+Resource ID: linux:service:tandem:tandem.service
+Provider: zorix_linux_adapter.adapter.LinuxAdapter
+Operation: linux.systemd.restart
+Risk: MEDIUM
+Confirmation required: yes
+Summary: Restart systemd service tandem.service
+
+Steps:
+1. Revalidate the service resource and SSH target
+2. Request restart of tandem.service through the fixed systemd executor
+3. Verify the resulting service state
+```
+
 ## Общие правила
 
 Renderer'ы:
@@ -170,3 +207,14 @@ print(text, end="")
 ```
 
 `zorix health` использует `HealthConsoleRenderer` и выводит краткий health report.
+
+## Пример использования ActionPlanResult
+
+```python
+from zorix_presentation import ActionPlanConsoleRenderer
+
+text = ActionPlanConsoleRenderer().render(action_result)
+print(text, end="")
+```
+
+`zorix action plan` использует этот renderer только для dry-run плана. Реальное выполнение actions в текущей итерации отсутствует.

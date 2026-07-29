@@ -36,6 +36,9 @@ zorix = "zorix.cli:main"
 [tool.setuptools]
 packages = [
     "zorix",
+    "zorix_action_api",
+    "zorix_action_engine",
+    "zorix_action_model",
     "zorix_core_model",
     "zorix_docker_adapter",
     "zorix_health_api",
@@ -55,6 +58,9 @@ packages = [
 
 [tool.setuptools.package-dir]
 zorix = "src/zorix"
+zorix_action_api = "modules/action_api/src/zorix_action_api"
+zorix_action_engine = "modules/action_engine/src/zorix_action_engine"
+zorix_action_model = "modules/action_model/src/zorix_action_model"
 zorix_core_model = "modules/core_model/src/zorix_core_model"
 zorix_docker_adapter = "modules/docker_adapter/src/zorix_docker_adapter"
 zorix_health_api = "modules/health_api/src/zorix_health_api"

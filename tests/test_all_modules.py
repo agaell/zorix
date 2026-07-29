@@ -9,6 +9,9 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 MODULE_TEST_DIRS = [
+    ROOT / "modules" / "action_api" / "tests",
+    ROOT / "modules" / "action_engine" / "tests",
+    ROOT / "modules" / "action_model" / "tests",
     ROOT / "modules" / "core_model" / "tests",
     ROOT / "modules" / "docker_adapter" / "tests",
     ROOT / "modules" / "health_api" / "tests",

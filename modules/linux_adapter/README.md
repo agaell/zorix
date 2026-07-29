@@ -12,7 +12,8 @@
 - постоянные filesystems через `df`;
 - listening TCP/UDP sockets через `ss`;
 - topology relations от host к обнаруженным ресурсам;
-- read-only health findings по уже обнаруженным resources.
+- read-only health findings по уже обнаруженным resources;
+- dry-run action plans для ограниченного набора systemd service actions.
 
 ## Один target на Adapter
 
@@ -208,6 +209,34 @@ export ZORIX_SSH_TARGET=tandem
 zorix health --plugins ./examples/plugins/linux
 ```
 
+## Action planning
+
+`LinuxAdapter` структурно реализует `ActionProvider`.
+
+`plan_action(context, request)` не выполняет SSH, `systemctl`, `subprocess` или изменение состояния. Метод только проверяет, что request относится к Linux service resource текущего target, и возвращает dry-run `ActionPlan`.
+
+Поддерживаемые actions Linux MVP:
+
+- `service.start` -> `linux.systemd.start`, risk `MEDIUM`;
+- `service.stop` -> `linux.systemd.stop`, risk `HIGH`;
+- `service.restart` -> `linux.systemd.restart`, risk `MEDIUM`.
+
+Все три действия требуют будущего подтверждения. В текущей итерации confirmation prompt и execution отсутствуют.
+
+Resource подходит только если это `linux:service:<target>:<unit>`, `metadata["host_id"]` указывает на текущий host, `metadata["unit"]` непустой, заканчивается на `.service`, не начинается с `-`, не содержит whitespace/control characters и совпадает с `Resource.id`.
+
+CLI dry-run:
+
+```bash
+export ZORIX_SSH_TARGET=tandem
+zorix action plan \
+  service.restart \
+  linux:service:tandem:tandem.service \
+  --plugins ./examples/plugins/linux
+```
+
+Arbitrary shell commands, sudo, action parameters and custom command arguments are not supported.
+
 ## Python API topology
 
 ```python
@@ -251,7 +280,11 @@ Command errors прерывают текущий adapter и обрабатыва
 - host, services, memory, persistent filesystems и listening sockets;
 - topology не вызывает SSH;
 - health evaluation не вызывает SSH;
+- action planning не вызывает SSH и не выполняет `systemctl`;
 - нет management actions;
+- нет action execution;
+- нет confirmation prompt;
+- нет rollback или audit log;
 - нет `journalctl`;
 - нет процессов;
 - socket не связан с service;

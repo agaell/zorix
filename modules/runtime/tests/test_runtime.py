@@ -5,6 +5,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
+from zorix_action_model import ActionPlanResult, ActionPlanStatus, ActionRejection, ActionRequest
 from zorix_core_model import Adapter, Resource
 from zorix_health_engine import HealthResult, HealthStatus
 from zorix_health_model import HealthLevel
@@ -279,6 +280,40 @@ class RuntimeTest(unittest.TestCase):
         scan_engine_class.return_value.scan.assert_not_called()
         topology_engine_class.return_value.build.assert_not_called()
 
+    def test_plan_action_delegates_resources_and_request_and_returns_result(self) -> None:
+        expected_result = _action_result()
+        resources = [_resource("service-1", "service")]
+        request = ActionRequest("service.restart", "service-1")
+
+        with patch("zorix_runtime.runtime.ActionEngine") as action_engine_class:
+            action_engine = action_engine_class.return_value
+            action_engine.plan.return_value = expected_result
+            runtime = ZorixRuntime()
+
+            result = runtime.plan_action(resources, request)
+
+        action_engine.plan.assert_called_once_with(resources, request)
+        self.assertIs(result, expected_result)
+
+    def test_plan_action_uses_runtime_registry_and_does_not_call_other_engines(self) -> None:
+        registry = Registry()
+        request = ActionRequest("service.restart", "service-1")
+
+        with patch("zorix_runtime.runtime.ActionEngine") as action_engine_class, patch(
+            "zorix_runtime.runtime.ScanEngine"
+        ) as scan_engine_class, patch("zorix_runtime.runtime.TopologyEngine") as topology_engine_class, patch(
+            "zorix_runtime.runtime.HealthEngine"
+        ) as health_engine_class:
+            runtime = ZorixRuntime(registry=registry)
+
+            runtime.plan_action([], request)
+
+        action_engine_class.assert_called_once_with(registry)
+        action_engine_class.return_value.plan.assert_called_once_with([], request)
+        scan_engine_class.return_value.scan.assert_not_called()
+        topology_engine_class.return_value.build.assert_not_called()
+        health_engine_class.return_value.evaluate.assert_not_called()
+
 
 def _topology_result() -> TopologyResult:
     return TopologyResult(
@@ -299,6 +334,14 @@ def _health_result() -> HealthResult:
         provider_count=0,
         successful_provider_count=0,
         resource_count=0,
+    )
+
+
+def _action_result() -> ActionPlanResult:
+    return ActionPlanResult(
+        status=ActionPlanStatus.REJECTED,
+        request=ActionRequest("service.restart", "service-1"),
+        rejection=ActionRejection("action.unsupported", "unsupported"),
     )
 
 

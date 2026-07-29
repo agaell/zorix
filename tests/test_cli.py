@@ -10,6 +10,15 @@ import unittest
 from unittest.mock import patch
 
 from zorix.cli import main
+from zorix_action_model import (
+    ActionPlan,
+    ActionPlanResult,
+    ActionPlanStatus,
+    ActionRejection,
+    ActionRequest,
+    ActionRisk,
+    ActionStep,
+)
 from zorix_core_model import Resource
 from zorix_health_engine import HealthProviderError, HealthResult, HealthStatus
 from zorix_health_model import HealthFinding, HealthLevel, HealthSeverity
@@ -102,6 +111,34 @@ def _health_result(
     )
 
 
+def _action_result(status: ActionPlanStatus = ActionPlanStatus.READY) -> ActionPlanResult:
+    request = ActionRequest("service.restart", "service-1")
+    if status is ActionPlanStatus.REJECTED:
+        return ActionPlanResult(
+            status=ActionPlanStatus.REJECTED,
+            request=request,
+            rejection=ActionRejection("action.unsupported", "unsupported"),
+            provider_count=1,
+        )
+
+    return ActionPlanResult(
+        status=ActionPlanStatus.READY,
+        request=request,
+        plan=ActionPlan(
+            source="test",
+            provider="provider.Class",
+            request=request,
+            resource_name="api",
+            operation="test.operation",
+            risk=ActionRisk.MEDIUM,
+            requires_confirmation=True,
+            summary="Plan action",
+            steps=(ActionStep(1, "step.one", "First step"),),
+        ),
+        provider_count=1,
+    )
+
+
 class FakeRuntime:
     def __init__(
         self,
@@ -111,17 +148,21 @@ class FakeRuntime:
         error_on_scan: Exception | None = None,
         error_on_topology: Exception | None = None,
         error_on_health: Exception | None = None,
+        error_on_action: Exception | None = None,
         call_order: list[str] | None = None,
         topology_result: TopologyResult | None = None,
         health_result: HealthResult | None = None,
+        action_result: ActionPlanResult | None = None,
     ) -> None:
         self.result = result or _result(ScanStatus.SUCCESS)
         self.topology_result = topology_result or _topology_result(TopologyStatus.SUCCESS)
         self.health_result = health_result or _health_result()
+        self.action_result = action_result or _action_result()
         self.error_on_load = error_on_load
         self.error_on_scan = error_on_scan
         self.error_on_topology = error_on_topology
         self.error_on_health = error_on_health
+        self.error_on_action = error_on_action
         self.call_order = call_order if call_order is not None else []
         self.loaded_paths: list[Path] = []
         self.continue_on_error_values: list[bool] = []
@@ -129,8 +170,11 @@ class FakeRuntime:
         self.health_continue_on_error_values: list[bool] = []
         self.topology_resources: object | None = None
         self.health_resources: object | None = None
+        self.action_resources: object | None = None
+        self.action_request: ActionRequest | None = None
         self.build_topology_called = False
         self.evaluate_health_called = False
+        self.plan_action_called = False
         self._adapters = (object(),)
 
     def load_plugins(self, path: Path) -> tuple[object, ...]:
@@ -174,6 +218,19 @@ class FakeRuntime:
         if self.error_on_health is not None:
             raise self.error_on_health
         return self.health_result
+
+    def plan_action(
+        self,
+        resources: object,
+        request: ActionRequest,
+    ) -> ActionPlanResult:
+        self.call_order.append("plan_action")
+        self.plan_action_called = True
+        self.action_resources = resources
+        self.action_request = request
+        if self.error_on_action is not None:
+            raise self.error_on_action
+        return self.action_result
 
     def adapters(self) -> tuple[object, ...]:
         self.call_order.append("adapters")
@@ -228,6 +285,26 @@ class FakeHealthRenderer:
 
     def render(self, result: HealthResult) -> str:
         self.call_order.append("health_render")
+        self.received_result = result
+        if self.error is not None:
+            raise self.error
+        return self.text
+
+
+class FakeActionPlanRenderer:
+    def __init__(
+        self,
+        call_order: list[str] | None = None,
+        text: str = "action output\n",
+        error: Exception | None = None,
+    ) -> None:
+        self.call_order = call_order if call_order is not None else []
+        self.text = text
+        self.error = error
+        self.received_result: ActionPlanResult | None = None
+
+    def render(self, result: ActionPlanResult) -> str:
+        self.call_order.append("action_render")
         self.received_result = result
         if self.error is not None:
             raise self.error
@@ -894,6 +971,187 @@ class CliTest(unittest.TestCase):
         self.assertIn("Findings: 1\n", stdout)
         self.assertIn("- INFO test.info: observed [cli-service-1]\n", stdout)
 
+    def test_action_plan_command_requires_arguments_and_plugins(self) -> None:
+        cases = (
+            ["action"],
+            ["action", "plan"],
+            ["action", "plan", "service.restart"],
+            ["action", "plan", "service.restart", "service-1"],
+        )
+
+        for argv in cases:
+            with self.subTest(argv=argv):
+                stderr = StringIO()
+                with redirect_stderr(stderr), self.assertRaises(SystemExit) as context:
+                    main(argv)
+                self.assertEqual(context.exception.code, 2)
+
+    def test_action_plan_help(self) -> None:
+        stdout = StringIO()
+
+        with redirect_stdout(stdout), self.assertRaises(SystemExit) as context:
+            main(["action", "plan", "--help"])
+
+        self.assertEqual(context.exception.code, 0)
+        self.assertIn("Create a dry-run action plan.", stdout.getvalue())
+        self.assertIn("--plugins", stdout.getvalue())
+        self.assertIn("--continue-on-error", stdout.getvalue())
+
+    def test_action_help(self) -> None:
+        stdout = StringIO()
+
+        with redirect_stdout(stdout), self.assertRaises(SystemExit) as context:
+            main(["action", "--help"])
+
+        self.assertEqual(context.exception.code, 0)
+        self.assertIn("Plan safe infrastructure actions.", stdout.getvalue())
+        self.assertIn("plan", stdout.getvalue())
+
+    def test_action_plan_path_continue_flag_and_request(self) -> None:
+        runtime = FakeRuntime()
+
+        _run_main(
+            [
+                "action",
+                "plan",
+                "service.restart",
+                "service-1",
+                "--plugins",
+                "plugins",
+                "--continue-on-error",
+            ],
+            runtime=runtime,
+        )
+
+        self.assertEqual(runtime.loaded_paths, [Path("plugins")])
+        self.assertEqual(runtime.continue_on_error_values, [True])
+        self.assertEqual(runtime.action_request, ActionRequest("service.restart", "service-1"))
+
+    def test_action_plan_workflow_ready(self) -> None:
+        call_order: list[str] = []
+        runtime = FakeRuntime(call_order=call_order)
+        scan_renderer = FakeRenderer(call_order=call_order, text="scan output\n")
+        action_renderer = FakeActionPlanRenderer(call_order=call_order, text="action output\n")
+
+        code, stdout, stderr = _run_main(
+            ["action", "plan", "service.restart", "service-1", "--plugins", "plugins"],
+            runtime=runtime,
+            renderer=scan_renderer,
+            action_renderer=action_renderer,
+        )
+
+        self.assertEqual(code, 0)
+        self.assertEqual(call_order, ["load_plugins", "scan", "plan_action", "action_render"])
+        self.assertEqual(stdout, "action output\n")
+        self.assertEqual(stderr, "")
+        self.assertIs(runtime.action_resources, runtime.result.resources)
+        self.assertIs(action_renderer.received_result, runtime.action_result)
+
+    def test_action_plan_scan_partial_prints_scan_and_action_and_returns_three(self) -> None:
+        runtime = FakeRuntime(_result(ScanStatus.PARTIAL))
+
+        code, stdout, stderr = _run_main(
+            ["action", "plan", "service.restart", "service-1", "--plugins", "plugins"],
+            runtime=runtime,
+            renderer=FakeRenderer(text="scan output\n"),
+            action_renderer=FakeActionPlanRenderer(text="action output\n"),
+        )
+
+        self.assertEqual(code, 3)
+        self.assertEqual(stdout, "scan output\n\naction output\n")
+        self.assertEqual(stderr, "")
+
+    def test_action_plan_scan_failed_does_not_plan(self) -> None:
+        runtime = FakeRuntime(_result(ScanStatus.FAILED))
+        action_renderer = FakeActionPlanRenderer(text="action output\n")
+
+        code, stdout, stderr = _run_main(
+            ["action", "plan", "service.restart", "service-1", "--plugins", "plugins"],
+            runtime=runtime,
+            renderer=FakeRenderer(text="failed scan\n"),
+            action_renderer=action_renderer,
+        )
+
+        self.assertEqual(code, 4)
+        self.assertEqual(stdout, "failed scan\n")
+        self.assertEqual(stderr, "")
+        self.assertFalse(runtime.plan_action_called)
+        self.assertIsNone(action_renderer.received_result)
+
+    def test_action_plan_rejected_returns_four(self) -> None:
+        runtime = FakeRuntime(action_result=_action_result(ActionPlanStatus.REJECTED))
+
+        code, _, _ = _run_main(
+            ["action", "plan", "service.restart", "service-1", "--plugins", "plugins"],
+            runtime=runtime,
+        )
+
+        self.assertEqual(code, 4)
+
+    def test_action_plan_exception_returns_one_without_stdout(self) -> None:
+        runtime = FakeRuntime(error_on_action=RuntimeError("planning failed"))
+
+        code, stdout, stderr = _run_main(
+            ["action", "plan", "service.restart", "service-1", "--plugins", "plugins"],
+            runtime=runtime,
+        )
+
+        self.assertEqual(code, 1)
+        self.assertEqual(stdout, "")
+        self.assertEqual(stderr, "Error: RuntimeError: planning failed\n")
+
+    def test_integration_action_plan_with_real_runtime_and_temp_plugin(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            plugin_dir = Path(directory) / "test_cli_action_adapter"
+            plugin_dir.mkdir()
+            (plugin_dir / "__init__.py").write_text(
+                textwrap.dedent(
+                    """
+                    from zorix_action_model import ActionPlan, ActionRisk, ActionStep
+                    from zorix_core_model import Adapter as BaseAdapter, Resource
+
+
+                    class Adapter(BaseAdapter):
+                        def discover(self):
+                            return [Resource("service-1", "service", "api", "active")]
+
+                        def plan_action(self, context, request):
+                            if request.action != "service.restart":
+                                return None
+                            return ActionPlan(
+                                "test",
+                                "test.Adapter",
+                                request,
+                                "api",
+                                "test.restart",
+                                ActionRisk.MEDIUM,
+                                True,
+                                "Restart api",
+                                (ActionStep(1, "test.step", "Plan restart"),),
+                            )
+                    """
+                ).strip(),
+                encoding="utf-8",
+            )
+
+            code, stdout, stderr = _run_main_without_patches(
+                [
+                    "action",
+                    "plan",
+                    "service.restart",
+                    "service-1",
+                    "--plugins",
+                    directory,
+                ]
+            )
+
+        self.assertEqual(code, 0)
+        self.assertEqual(stderr, "")
+        self.assertIn("Action planning: READY\n", stdout)
+        self.assertIn("Dry run: yes\n", stdout)
+        self.assertIn("Operation: test.restart\n", stdout)
+        self.assertIn("Risk: MEDIUM\n", stdout)
+
 
 def _run_main(
     argv: list[str],
@@ -902,6 +1160,7 @@ def _run_main(
     renderer: FakeRenderer | None = None,
     topology_renderer: FakeTopologyRenderer | None = None,
     health_renderer: FakeHealthRenderer | None = None,
+    action_renderer: FakeActionPlanRenderer | None = None,
 ) -> tuple[int, str, str]:
     stdout = StringIO()
     stderr = StringIO()
@@ -911,14 +1170,18 @@ def _run_main(
         topology_renderer if topology_renderer is not None else FakeTopologyRenderer()
     )
     health_renderer = health_renderer if health_renderer is not None else FakeHealthRenderer()
+    action_renderer = (
+        action_renderer if action_renderer is not None else FakeActionPlanRenderer()
+    )
 
     with patch("zorix.cli._create_runtime", return_value=runtime):
         with patch("zorix.cli._create_renderer", return_value=renderer):
             with patch("zorix.cli._create_topology_renderer", return_value=topology_renderer):
                 with patch("zorix.cli._create_health_renderer", return_value=health_renderer):
-                    with redirect_stdout(stdout):
-                        with redirect_stderr(stderr):
-                            code = main(argv)
+                    with patch("zorix.cli._create_action_plan_renderer", return_value=action_renderer):
+                        with redirect_stdout(stdout):
+                            with redirect_stderr(stderr):
+                                code = main(argv)
 
     return code, stdout.getvalue(), stderr.getvalue()
 

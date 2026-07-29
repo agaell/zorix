@@ -5,9 +5,15 @@ from pathlib import Path
 import sys
 from typing import Sequence
 
+from zorix_action_model import ActionPlanStatus, ActionRequest
 from zorix_health_engine import HealthStatus
 from zorix_health_model import HealthLevel
-from zorix_presentation import ConsoleRenderer, HealthConsoleRenderer, TopologyConsoleRenderer
+from zorix_presentation import (
+    ActionPlanConsoleRenderer,
+    ConsoleRenderer,
+    HealthConsoleRenderer,
+    TopologyConsoleRenderer,
+)
 from zorix_runtime import ZorixRuntime
 from zorix_scan_engine import ScanStatus
 from zorix_topology_engine import TopologyStatus
@@ -40,6 +46,13 @@ def main(argv: Sequence[str] | None = None) -> int:
     if args.command == "health":
         try:
             return _run_health(args)
+        except Exception as error:
+            print(_format_execution_error(error), file=sys.stderr)
+            return 1
+
+    if args.command == "action" and args.action_command == "plan":
+        try:
+            return _run_action_plan(args)
         except Exception as error:
             print(_format_execution_error(error), file=sys.stderr)
             return 1
@@ -109,6 +122,31 @@ def _build_parser() -> argparse.ArgumentParser:
         "--continue-on-error",
         action="store_true",
         help="continue scanning and health evaluation after adapter/provider errors",
+    )
+
+    action_parser = subparsers.add_parser(
+        "action",
+        help="plan safe infrastructure actions",
+        description="Plan safe infrastructure actions.",
+    )
+    action_subparsers = action_parser.add_subparsers(dest="action_command")
+    action_plan_parser = action_subparsers.add_parser(
+        "plan",
+        help="create a dry-run action plan",
+        description="Create a dry-run action plan.",
+    )
+    action_plan_parser.add_argument("action", help="action identifier")
+    action_plan_parser.add_argument("resource_id", help="target resource id")
+    action_plan_parser.add_argument(
+        "--plugins",
+        type=Path,
+        required=True,
+        help="path to a directory with adapter plugins",
+    )
+    action_plan_parser.add_argument(
+        "--continue-on-error",
+        action="store_true",
+        help="continue inventory scan after adapter errors",
     )
 
     return parser
@@ -183,6 +221,35 @@ def _run_health(args: argparse.Namespace) -> int:
     return _health_workflow_exit_code(scan_result.status, health_result.status, health_result.level)
 
 
+def _run_action_plan(args: argparse.Namespace) -> int:
+    runtime = _create_runtime()
+    scan_renderer = _create_renderer()
+    action_renderer = _create_action_plan_renderer()
+
+    runtime.load_plugins(args.plugins)
+    scan_result = runtime.scan(continue_on_error=args.continue_on_error)
+
+    if scan_result.status is ScanStatus.FAILED:
+        adapter_count = len(runtime.adapters())
+        scan_text = scan_renderer.render(scan_result, adapter_count=adapter_count)
+        print(scan_text, end="")
+        return 4
+
+    request = ActionRequest(args.action, args.resource_id)
+    action_result = runtime.plan_action(scan_result.resources, request)
+    action_text = action_renderer.render(action_result)
+
+    if scan_result.status is ScanStatus.PARTIAL:
+        adapter_count = len(runtime.adapters())
+        scan_text = scan_renderer.render(scan_result, adapter_count=adapter_count)
+        text = _join_rendered_sections(scan_text, action_text)
+    else:
+        text = action_text
+
+    print(text, end="")
+    return _action_plan_workflow_exit_code(scan_result.status, action_result.status)
+
+
 def _create_runtime() -> ZorixRuntime:
     return ZorixRuntime()
 
@@ -197,6 +264,10 @@ def _create_topology_renderer() -> TopologyConsoleRenderer:
 
 def _create_health_renderer() -> HealthConsoleRenderer:
     return HealthConsoleRenderer()
+
+
+def _create_action_plan_renderer() -> ActionPlanConsoleRenderer:
+    return ActionPlanConsoleRenderer()
 
 
 def _exit_code(status: ScanStatus) -> int:
@@ -244,6 +315,19 @@ def _health_workflow_exit_code(
     if health_status is HealthStatus.PARTIAL:
         return 3
     if health_level is HealthLevel.WARNING:
+        return 3
+    return 0
+
+
+def _action_plan_workflow_exit_code(
+    scan_status: ScanStatus,
+    action_status: ActionPlanStatus,
+) -> int:
+    if scan_status is ScanStatus.FAILED:
+        return 4
+    if action_status is ActionPlanStatus.REJECTED:
+        return 4
+    if scan_status is ScanStatus.PARTIAL:
         return 3
     return 0
 
