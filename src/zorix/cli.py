@@ -5,9 +5,10 @@ from pathlib import Path
 import sys
 from typing import Sequence
 
-from zorix_presentation import ConsoleRenderer
+from zorix_presentation import ConsoleRenderer, TopologyConsoleRenderer
 from zorix_runtime import ZorixRuntime
 from zorix_scan_engine import ScanStatus
+from zorix_topology_engine import TopologyStatus
 
 from . import __version__
 
@@ -23,6 +24,13 @@ def main(argv: Sequence[str] | None = None) -> int:
     if args.command == "scan":
         try:
             return _run_scan(args)
+        except Exception as error:
+            print(_format_execution_error(error), file=sys.stderr)
+            return 1
+
+    if args.command == "topology":
+        try:
+            return _run_topology(args)
         except Exception as error:
             print(_format_execution_error(error), file=sys.stderr)
             return 1
@@ -60,6 +68,23 @@ def _build_parser() -> argparse.ArgumentParser:
         help="continue scanning remaining adapters after adapter errors",
     )
 
+    topology_parser = subparsers.add_parser(
+        "topology",
+        help="discover resources and build topology",
+        description="Discover resources and build their topology.",
+    )
+    topology_parser.add_argument(
+        "--plugins",
+        type=Path,
+        required=True,
+        help="path to a directory with adapter plugins",
+    )
+    topology_parser.add_argument(
+        "--continue-on-error",
+        action="store_true",
+        help="continue scanning and topology building after adapter/provider errors",
+    )
+
     return parser
 
 
@@ -76,12 +101,41 @@ def _run_scan(args: argparse.Namespace) -> int:
     return _exit_code(result.status)
 
 
+def _run_topology(args: argparse.Namespace) -> int:
+    runtime = _create_runtime()
+    scan_renderer = _create_renderer()
+    topology_renderer = _create_topology_renderer()
+
+    runtime.load_plugins(args.plugins)
+    scan_result = runtime.scan(continue_on_error=args.continue_on_error)
+    adapter_count = len(runtime.adapters())
+    scan_text = scan_renderer.render(scan_result, adapter_count=adapter_count)
+
+    if scan_result.status is ScanStatus.FAILED:
+        print(scan_text, end="")
+        return 4
+
+    topology_result = runtime.build_topology(
+        scan_result.resources,
+        continue_on_error=args.continue_on_error,
+    )
+    topology_text = topology_renderer.render(topology_result)
+    text = _join_rendered_sections(scan_text, topology_text)
+    print(text, end="")
+
+    return _topology_workflow_exit_code(scan_result.status, topology_result.status)
+
+
 def _create_runtime() -> ZorixRuntime:
     return ZorixRuntime()
 
 
 def _create_renderer() -> ConsoleRenderer:
     return ConsoleRenderer()
+
+
+def _create_topology_renderer() -> TopologyConsoleRenderer:
+    return TopologyConsoleRenderer()
 
 
 def _exit_code(status: ScanStatus) -> int:
@@ -95,6 +149,26 @@ def _exit_code(status: ScanStatus) -> int:
         return 4
 
     return 1
+
+
+def _topology_workflow_exit_code(
+    scan_status: ScanStatus,
+    topology_status: TopologyStatus,
+) -> int:
+    if scan_status is ScanStatus.FAILED or topology_status is TopologyStatus.FAILED:
+        return 4
+
+    if scan_status is ScanStatus.PARTIAL or topology_status is TopologyStatus.PARTIAL:
+        return 3
+
+    if scan_status is ScanStatus.SUCCESS and topology_status is TopologyStatus.SUCCESS:
+        return 0
+
+    return 1
+
+
+def _join_rendered_sections(first: str, second: str) -> str:
+    return first.rstrip("\n") + "\n\n" + second.lstrip("\n").rstrip("\n") + "\n"
 
 
 def _format_execution_error(error: Exception) -> str:

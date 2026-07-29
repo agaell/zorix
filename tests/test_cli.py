@@ -11,7 +11,9 @@ from unittest.mock import patch
 
 from zorix.cli import main
 from zorix_core_model import Resource
+from zorix_resource_graph import ResourceGraphBuilder, ResourceRelation
 from zorix_scan_engine import ScanResult, ScanStatus
+from zorix_topology_engine import TopologyProviderError, TopologyResult, TopologyStatus
 
 
 def _resource(resource_id: str, resource_type: str, name: str) -> Resource:
@@ -32,6 +34,37 @@ def _result(status: ScanStatus) -> ScanResult:
     return ScanResult(status=status, resources=resources, errors=errors)
 
 
+def _topology_result(status: TopologyStatus) -> TopologyResult:
+    builder = ResourceGraphBuilder()
+    builder.add_resources(
+        (
+            _resource("service:api", "service", "api"),
+            _resource("database:main", "database", "main"),
+        )
+    )
+    if status is not TopologyStatus.FAILED:
+        builder.add_relation(ResourceRelation("service:api", "database:main", "depends_on"))
+
+    errors = ()
+    provider_count = 1
+    successful_provider_count = 1
+    if status is TopologyStatus.PARTIAL:
+        provider_count = 2
+        successful_provider_count = 1
+        errors = (TopologyProviderError("example.Broken", "RuntimeError", "broken"),)
+    elif status is TopologyStatus.FAILED:
+        successful_provider_count = 0
+        errors = (TopologyProviderError("example.Broken", "RuntimeError", "broken"),)
+
+    return TopologyResult(
+        status=status,
+        graph=builder.build(),
+        errors=errors,
+        provider_count=provider_count,
+        successful_provider_count=successful_provider_count,
+    )
+
+
 class FakeRuntime:
     def __init__(
         self,
@@ -39,14 +72,21 @@ class FakeRuntime:
         *,
         error_on_load: Exception | None = None,
         error_on_scan: Exception | None = None,
+        error_on_topology: Exception | None = None,
         call_order: list[str] | None = None,
+        topology_result: TopologyResult | None = None,
     ) -> None:
         self.result = result or _result(ScanStatus.SUCCESS)
+        self.topology_result = topology_result or _topology_result(TopologyStatus.SUCCESS)
         self.error_on_load = error_on_load
         self.error_on_scan = error_on_scan
+        self.error_on_topology = error_on_topology
         self.call_order = call_order if call_order is not None else []
         self.loaded_paths: list[Path] = []
         self.continue_on_error_values: list[bool] = []
+        self.topology_continue_on_error_values: list[bool] = []
+        self.topology_resources: object | None = None
+        self.build_topology_called = False
         self._adapters = (object(),)
 
     def load_plugins(self, path: Path) -> tuple[object, ...]:
@@ -62,6 +102,20 @@ class FakeRuntime:
         if self.error_on_scan is not None:
             raise self.error_on_scan
         return self.result
+
+    def build_topology(
+        self,
+        resources: object,
+        *,
+        continue_on_error: bool = False,
+    ) -> TopologyResult:
+        self.call_order.append("build_topology")
+        self.build_topology_called = True
+        self.topology_resources = resources
+        self.topology_continue_on_error_values.append(continue_on_error)
+        if self.error_on_topology is not None:
+            raise self.error_on_topology
+        return self.topology_result
 
     def adapters(self) -> tuple[object, ...]:
         self.call_order.append("adapters")
@@ -79,6 +133,26 @@ class FakeRenderer:
         self.call_order.append("render")
         self.received_result = result
         self.received_adapter_count = adapter_count
+        return self.text
+
+
+class FakeTopologyRenderer:
+    def __init__(
+        self,
+        call_order: list[str] | None = None,
+        text: str = "topology output\n",
+        error: Exception | None = None,
+    ) -> None:
+        self.call_order = call_order if call_order is not None else []
+        self.text = text
+        self.error = error
+        self.received_result: TopologyResult | None = None
+
+    def render(self, result: TopologyResult) -> str:
+        self.call_order.append("topology_render")
+        self.received_result = result
+        if self.error is not None:
+            raise self.error
         return self.text
 
 
@@ -246,6 +320,58 @@ class CliTest(unittest.TestCase):
         self.assertEqual(context.exception.code, 2)
         self.assertIn("--plugins", stderr.getvalue())
 
+    def test_topology_command_requires_plugins(self) -> None:
+        stderr = StringIO()
+
+        with redirect_stderr(stderr), self.assertRaises(SystemExit) as context:
+            main(["topology"])
+
+        self.assertEqual(context.exception.code, 2)
+        self.assertIn("--plugins", stderr.getvalue())
+
+    def test_topology_unknown_argument_uses_argparse_code_two(self) -> None:
+        stderr = StringIO()
+
+        with redirect_stderr(stderr), self.assertRaises(SystemExit) as context:
+            main(["topology", "--plugins", "plugins", "--json"])
+
+        self.assertEqual(context.exception.code, 2)
+        self.assertIn("unrecognized arguments", stderr.getvalue())
+
+    def test_topology_help_uses_argparse_code_zero(self) -> None:
+        stdout = StringIO()
+
+        with redirect_stdout(stdout), self.assertRaises(SystemExit) as context:
+            main(["topology", "--help"])
+
+        self.assertEqual(context.exception.code, 0)
+        self.assertIn("Discover resources and build their topology.", stdout.getvalue())
+        self.assertIn("--plugins", stdout.getvalue())
+        self.assertIn("--continue-on-error", stdout.getvalue())
+
+    def test_topology_passes_plugin_path_as_path(self) -> None:
+        runtime = FakeRuntime()
+
+        _run_main(["topology", "--plugins", "plugins"], runtime=runtime)
+
+        self.assertEqual(runtime.loaded_paths, [Path("plugins")])
+
+    def test_topology_continue_on_error_defaults_to_false(self) -> None:
+        runtime = FakeRuntime()
+
+        _run_main(["topology", "--plugins", "plugins"], runtime=runtime)
+
+        self.assertEqual(runtime.continue_on_error_values, [False])
+        self.assertEqual(runtime.topology_continue_on_error_values, [False])
+
+    def test_topology_continue_on_error_flag_passes_true_to_both_phases(self) -> None:
+        runtime = FakeRuntime()
+
+        _run_main(["topology", "--plugins", "plugins", "--continue-on-error"], runtime=runtime)
+
+        self.assertEqual(runtime.continue_on_error_values, [True])
+        self.assertEqual(runtime.topology_continue_on_error_values, [True])
+
     def test_main_module_exists(self) -> None:
         spec = importlib.util.find_spec("zorix.__main__")
 
@@ -267,6 +393,178 @@ class CliTest(unittest.TestCase):
         _run_main(["scan", "--plugins", "plugins"], runtime=runtime, renderer=renderer)
 
         self.assertEqual(call_order, ["load_plugins", "scan", "adapters", "render"])
+
+    def test_topology_call_order_and_renderers(self) -> None:
+        call_order: list[str] = []
+        runtime = FakeRuntime(call_order=call_order)
+        scan_renderer = FakeRenderer(call_order=call_order, text="scan output\n")
+        topology_renderer = FakeTopologyRenderer(call_order=call_order, text="topology output\n")
+
+        code, stdout, stderr = _run_main(
+            ["topology", "--plugins", "plugins"],
+            runtime=runtime,
+            renderer=scan_renderer,
+            topology_renderer=topology_renderer,
+        )
+
+        self.assertEqual(code, 0)
+        self.assertEqual(
+            call_order,
+            [
+                "load_plugins",
+                "scan",
+                "adapters",
+                "render",
+                "build_topology",
+                "topology_render",
+            ],
+        )
+        self.assertIs(runtime.topology_resources, runtime.result.resources)
+        self.assertEqual(scan_renderer.received_adapter_count, 1)
+        self.assertIs(topology_renderer.received_result, runtime.topology_result)
+        self.assertEqual(stdout, "scan output\n\ntopology output\n")
+        self.assertEqual(stderr, "")
+
+    def test_topology_joined_output_has_single_blank_line_and_one_final_newline(self) -> None:
+        scan_renderer = FakeRenderer(text="scan output\n\n")
+        topology_renderer = FakeTopologyRenderer(text="\ntopology output\n\n")
+
+        _, stdout, stderr = _run_main(
+            ["topology", "--plugins", "plugins"],
+            renderer=scan_renderer,
+            topology_renderer=topology_renderer,
+        )
+
+        self.assertEqual(stdout, "scan output\n\ntopology output\n")
+        self.assertFalse(stdout.endswith("\n\n"))
+        self.assertNotIn("\n\n\n", stdout)
+        self.assertEqual(stderr, "")
+
+    def test_topology_success_success_returns_zero(self) -> None:
+        runtime = FakeRuntime(
+            _result(ScanStatus.SUCCESS),
+            topology_result=_topology_result(TopologyStatus.SUCCESS),
+        )
+
+        code, _, _ = _run_main(["topology", "--plugins", "plugins"], runtime=runtime)
+
+        self.assertEqual(code, 0)
+
+    def test_topology_partial_scan_success_topology_returns_three(self) -> None:
+        runtime = FakeRuntime(
+            _result(ScanStatus.PARTIAL),
+            topology_result=_topology_result(TopologyStatus.SUCCESS),
+        )
+
+        code, _, _ = _run_main(["topology", "--plugins", "plugins"], runtime=runtime)
+
+        self.assertEqual(code, 3)
+
+    def test_topology_success_scan_partial_topology_returns_three(self) -> None:
+        runtime = FakeRuntime(
+            _result(ScanStatus.SUCCESS),
+            topology_result=_topology_result(TopologyStatus.PARTIAL),
+        )
+
+        code, _, _ = _run_main(["topology", "--plugins", "plugins"], runtime=runtime)
+
+        self.assertEqual(code, 3)
+
+    def test_topology_partial_partial_returns_three(self) -> None:
+        runtime = FakeRuntime(
+            _result(ScanStatus.PARTIAL),
+            topology_result=_topology_result(TopologyStatus.PARTIAL),
+        )
+
+        code, _, _ = _run_main(["topology", "--plugins", "plugins"], runtime=runtime)
+
+        self.assertEqual(code, 3)
+
+    def test_topology_success_scan_failed_topology_returns_four(self) -> None:
+        runtime = FakeRuntime(
+            _result(ScanStatus.SUCCESS),
+            topology_result=_topology_result(TopologyStatus.FAILED),
+        )
+
+        code, stdout, stderr = _run_main(["topology", "--plugins", "plugins"], runtime=runtime)
+
+        self.assertEqual(code, 4)
+        self.assertIn("topology output\n", stdout)
+        self.assertEqual(stderr, "")
+
+    def test_topology_partial_scan_failed_topology_returns_four(self) -> None:
+        runtime = FakeRuntime(
+            _result(ScanStatus.PARTIAL),
+            topology_result=_topology_result(TopologyStatus.FAILED),
+        )
+
+        code, _, _ = _run_main(["topology", "--plugins", "plugins"], runtime=runtime)
+
+        self.assertEqual(code, 4)
+
+    def test_scan_failed_prints_only_scan_result_and_does_not_build_topology(self) -> None:
+        runtime = FakeRuntime(_result(ScanStatus.FAILED))
+        scan_renderer = FakeRenderer(text="failed scan\n")
+        topology_renderer = FakeTopologyRenderer(text="topology output\n")
+
+        code, stdout, stderr = _run_main(
+            ["topology", "--plugins", "plugins"],
+            runtime=runtime,
+            renderer=scan_renderer,
+            topology_renderer=topology_renderer,
+        )
+
+        self.assertEqual(code, 4)
+        self.assertEqual(stdout, "failed scan\n")
+        self.assertEqual(stderr, "")
+        self.assertFalse(runtime.build_topology_called)
+        self.assertIsNone(topology_renderer.received_result)
+
+    def test_topology_load_plugins_error_returns_one(self) -> None:
+        runtime = FakeRuntime(error_on_load=RuntimeError("load failed"))
+
+        code, stdout, stderr = _run_main(["topology", "--plugins", "plugins"], runtime=runtime)
+
+        self.assertEqual(code, 1)
+        self.assertEqual(stdout, "")
+        self.assertEqual(stderr, "Error: RuntimeError: load failed\n")
+
+    def test_topology_scan_error_returns_one(self) -> None:
+        runtime = FakeRuntime(error_on_scan=RuntimeError("scan failed"))
+
+        code, stdout, stderr = _run_main(["topology", "--plugins", "plugins"], runtime=runtime)
+
+        self.assertEqual(code, 1)
+        self.assertEqual(stdout, "")
+        self.assertEqual(stderr, "Error: RuntimeError: scan failed\n")
+
+    def test_topology_build_error_returns_one_without_partial_stdout(self) -> None:
+        runtime = FakeRuntime(error_on_topology=RuntimeError("topology failed"))
+        scan_renderer = FakeRenderer(text="scan text\n")
+
+        code, stdout, stderr = _run_main(
+            ["topology", "--plugins", "plugins"],
+            runtime=runtime,
+            renderer=scan_renderer,
+        )
+
+        self.assertEqual(code, 1)
+        self.assertEqual(stdout, "")
+        self.assertEqual(stderr, "Error: RuntimeError: topology failed\n")
+        self.assertNotIn("scan text", stdout)
+        self.assertNotIn("Traceback", stderr)
+
+    def test_topology_renderer_error_returns_one_without_stdout(self) -> None:
+        topology_renderer = FakeTopologyRenderer(error=RuntimeError("render failed"))
+
+        code, stdout, stderr = _run_main(
+            ["topology", "--plugins", "plugins"],
+            topology_renderer=topology_renderer,
+        )
+
+        self.assertEqual(code, 1)
+        self.assertEqual(stdout, "")
+        self.assertEqual(stderr, "Error: RuntimeError: render failed\n")
 
     def test_integration_scan_with_real_runtime_and_temp_plugin(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -301,23 +599,86 @@ class CliTest(unittest.TestCase):
         self.assertIn("- Service: cli-api\n", stdout)
         self.assertEqual(stderr, "")
 
+    def test_integration_topology_with_real_runtime_and_temp_plugin(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            plugin_dir = Path(directory) / "test_cli_topology_adapter"
+            plugin_dir.mkdir()
+            counter_file = Path(directory) / "discover-count.txt"
+            (plugin_dir / "__init__.py").write_text(
+                textwrap.dedent(
+                    f"""
+                    from pathlib import Path
+
+                    from zorix_core_model import Adapter as BaseAdapter, Resource
+                    from zorix_resource_graph import ResourceRelation
+
+                    COUNTER_FILE = Path({str(counter_file)!r})
+
+
+                    class Adapter(BaseAdapter):
+                        def discover(self):
+                            count = 0
+                            if COUNTER_FILE.exists():
+                                count = int(COUNTER_FILE.read_text(encoding="utf-8"))
+                            COUNTER_FILE.write_text(str(count + 1), encoding="utf-8")
+                            return [
+                                Resource("service:api", "service", "api", "active"),
+                                Resource("database:main", "database", "main", "active"),
+                            ]
+
+                        def discover_relations(self, context):
+                            return [
+                                ResourceRelation(
+                                    "service:api",
+                                    "database:main",
+                                    "depends_on",
+                                )
+                            ]
+                    """
+                ).strip(),
+                encoding="utf-8",
+            )
+
+            code, stdout, stderr = _run_main_without_patches(["topology", "--plugins", directory])
+            discover_count = counter_file.read_text(encoding="utf-8")
+
+        self.assertEqual(code, 0)
+        self.assertEqual(stderr, "")
+        self.assertIn("Status: SUCCESS\n", stdout)
+        self.assertIn("Adapters: 1\n", stdout)
+        self.assertIn("Resources: 2\n", stdout)
+        self.assertIn("- Service: api\n", stdout)
+        self.assertIn("- Database: main\n", stdout)
+        self.assertIn("Topology: SUCCESS\n", stdout)
+        self.assertIn("Providers: 1\n", stdout)
+        self.assertIn("Successful providers: 1\n", stdout)
+        self.assertIn("Failed providers: 0\n", stdout)
+        self.assertIn("Relations: 1\n", stdout)
+        self.assertIn("- Service api --depends_on--> Database main\n", stdout)
+        self.assertEqual(discover_count, "1")
+
 
 def _run_main(
     argv: list[str],
     *,
     runtime: FakeRuntime | None = None,
     renderer: FakeRenderer | None = None,
+    topology_renderer: FakeTopologyRenderer | None = None,
 ) -> tuple[int, str, str]:
     stdout = StringIO()
     stderr = StringIO()
     runtime = runtime if runtime is not None else FakeRuntime()
     renderer = renderer if renderer is not None else FakeRenderer()
+    topology_renderer = (
+        topology_renderer if topology_renderer is not None else FakeTopologyRenderer()
+    )
 
     with patch("zorix.cli._create_runtime", return_value=runtime):
         with patch("zorix.cli._create_renderer", return_value=renderer):
-            with redirect_stdout(stdout):
-                with redirect_stderr(stderr):
-                    code = main(argv)
+            with patch("zorix.cli._create_topology_renderer", return_value=topology_renderer):
+                with redirect_stdout(stdout):
+                    with redirect_stderr(stderr):
+                        code = main(argv)
 
     return code, stdout.getvalue(), stderr.getvalue()
 
