@@ -6,7 +6,8 @@ import unittest
 from unittest.mock import patch
 
 from zorix_linux_adapter import LinuxAdapter, LinuxConfigurationError
-from zorix_presentation import TopologyConsoleRenderer
+from zorix_health_engine import HealthEngine
+from zorix_presentation import HealthConsoleRenderer, TopologyConsoleRenderer
 from zorix_plugin_loader import PluginLoader
 from zorix_registry import Registry
 from zorix_scan_engine import ScanEngine, ScanStatus
@@ -128,6 +129,51 @@ class LinuxIntegrationTest(unittest.TestCase):
         self.assertIn("--has_memory-->", rendered)
         self.assertIn("--mounts-->", rendered)
         self.assertIn("--listens_on-->", rendered)
+
+    def test_scan_resources_can_evaluate_linux_health_without_second_ssh_call(self) -> None:
+        runner = FakeSshCommandRunner(
+            _snapshot(
+                hostname="tandem-server\n",
+                kernel="6.8.0\n",
+                architecture="x86_64\n",
+                os_release='ID=ubuntu\nPRETTY_NAME="Ubuntu 24.04 LTS"\nVERSION_ID="24.04"\n',
+                services=(
+                    "nginx.service loaded active running Nginx\n"
+                    "tandem.service loaded failed failed Tandem\n"
+                ),
+                meminfo=(
+                    "MemTotal:       8192000 kB\n"
+                    "MemAvailable:   4096000 kB\n"
+                ),
+                filesystems="/dev/vda1 ext4 100 84 16 84% /\n",
+                sockets="tcp LISTEN 0 511 0.0.0.0:443 0.0.0.0:*\n",
+            )
+        )
+        adapter = LinuxAdapter("tandem", runner)
+        registry = Registry()
+        registry.register(adapter)
+
+        scan_result = ScanEngine(registry).scan()
+        ssh_calls_after_scan = list(runner.calls)
+        health_result = HealthEngine(registry).evaluate(scan_result.resources)
+        rendered = HealthConsoleRenderer().render(health_result)
+
+        self.assertEqual(runner.calls, ssh_calls_after_scan)
+        self.assertIn("Health evaluation: SUCCESS\n", rendered)
+        self.assertIn("Health: CRITICAL\n", rendered)
+        self.assertIn("Findings: 2\n", rendered)
+        self.assertIn("Critical: 1\n", rendered)
+        self.assertIn("Warnings: 1\n", rendered)
+        self.assertIn(
+            "- CRITICAL linux.service.failed: Service tandem.service is failed "
+            "[linux:service:tandem:tandem.service]\n",
+            rendered,
+        )
+        self.assertIn(
+            "- WARNING linux.filesystem.usage_high: Filesystem / usage is 84% "
+            "[linux:filesystem:tandem:%2F]\n",
+            rendered,
+        )
 
 
 class LinuxPluginLoaderIntegrationTest(unittest.TestCase):

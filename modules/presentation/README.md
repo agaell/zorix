@@ -59,9 +59,44 @@ Relations:
 - Container zorix-api --connected_to--> Network backend
 ```
 
+### HealthConsoleRenderer
+
+`HealthConsoleRenderer` форматирует `HealthResult`.
+
+Он выводит:
+
+- статус health evaluation;
+- итоговый health level;
+- количество providers;
+- количество successful и failed providers;
+- количество evaluated resources;
+- количество findings по severity;
+- список findings;
+- список provider errors.
+
+Пример:
+
+```text
+Health evaluation: SUCCESS
+Health: WARNING
+Providers: 1
+Successful providers: 1
+Failed providers: 0
+Resources evaluated: 205
+Findings: 1
+Critical: 0
+Warnings: 1
+Info: 0
+
+Findings:
+- WARNING linux.filesystem.usage_high: Filesystem / usage is 84% [linux:filesystem:tandem:%2F]
+```
+
+Metadata findings в plain-text выводе не показывается.
+
 ## Общие правила
 
-Оба renderer'а:
+Renderer'ы:
 
 - возвращают строку;
 - не вызывают `print()`;
@@ -124,3 +159,14 @@ print(text, end="")
 ```
 
 CLI `scan` пока использует только форматирование inventory. CLI-команда для topology будет добавлена отдельно.
+
+## Пример использования HealthResult
+
+```python
+from zorix_presentation import HealthConsoleRenderer
+
+text = HealthConsoleRenderer().render(health_result)
+print(text, end="")
+```
+
+`zorix health` использует `HealthConsoleRenderer` и выводит краткий health report.

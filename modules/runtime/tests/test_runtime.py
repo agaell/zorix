@@ -6,6 +6,8 @@ from pathlib import Path
 from unittest.mock import patch
 
 from zorix_core_model import Adapter, Resource
+from zorix_health_engine import HealthResult, HealthStatus
+from zorix_health_model import HealthLevel
 from zorix_plugin_loader import PluginLoader
 from zorix_registry import DuplicateAdapterError, Registry
 from zorix_resource_graph import ResourceGraphBuilder
@@ -234,6 +236,49 @@ class RuntimeTest(unittest.TestCase):
 
         topology_engine_class.return_value.build.assert_not_called()
 
+    def test_evaluate_health_delegates_resources_and_returns_result(self) -> None:
+        expected_result = _health_result()
+        resources = [_resource("service-1", "service")]
+
+        with patch("zorix_runtime.runtime.HealthEngine") as health_engine_class:
+            health_engine = health_engine_class.return_value
+            health_engine.evaluate.return_value = expected_result
+            runtime = ZorixRuntime()
+
+            result = runtime.evaluate_health(resources)
+
+        health_engine.evaluate.assert_called_once_with(resources, continue_on_error=False)
+        self.assertIs(result, expected_result)
+
+    def test_evaluate_health_uses_runtime_registry(self) -> None:
+        registry = Registry()
+
+        with patch("zorix_runtime.runtime.HealthEngine") as health_engine_class:
+            runtime = ZorixRuntime(registry=registry)
+
+        health_engine_class.assert_called_once_with(registry)
+        self.assertTrue(callable(runtime.evaluate_health))
+
+    def test_evaluate_health_passes_continue_on_error(self) -> None:
+        with patch("zorix_runtime.runtime.HealthEngine") as health_engine_class:
+            health_engine = health_engine_class.return_value
+            runtime = ZorixRuntime()
+
+            runtime.evaluate_health([], continue_on_error=True)
+
+        health_engine.evaluate.assert_called_once_with([], continue_on_error=True)
+
+    def test_evaluate_health_does_not_call_scan_or_topology(self) -> None:
+        with patch("zorix_runtime.runtime.ScanEngine") as scan_engine_class, patch(
+            "zorix_runtime.runtime.TopologyEngine"
+        ) as topology_engine_class:
+            runtime = ZorixRuntime()
+
+            runtime.evaluate_health([])
+
+        scan_engine_class.return_value.scan.assert_not_called()
+        topology_engine_class.return_value.build.assert_not_called()
+
 
 def _topology_result() -> TopologyResult:
     return TopologyResult(
@@ -242,6 +287,18 @@ def _topology_result() -> TopologyResult:
         errors=(),
         provider_count=0,
         successful_provider_count=0,
+    )
+
+
+def _health_result() -> HealthResult:
+    return HealthResult(
+        status=HealthStatus.SUCCESS,
+        level=HealthLevel.HEALTHY,
+        findings=(),
+        errors=(),
+        provider_count=0,
+        successful_provider_count=0,
+        resource_count=0,
     )
 
 

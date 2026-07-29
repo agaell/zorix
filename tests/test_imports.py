@@ -3,6 +3,9 @@ import unittest
 import zorix
 import zorix_core_model
 import zorix_docker_adapter
+import zorix_health_api
+import zorix_health_engine
+import zorix_health_model
 import zorix_linux_adapter
 import zorix_mock_adapter
 import zorix_plugin_loader
@@ -14,6 +17,9 @@ import zorix_runtime
 import zorix_topology_api
 import zorix_topology_engine
 from zorix_core_model import Adapter, Event, Resource, Tool, Workflow
+from zorix_health_engine import HealthEngine
+from zorix_health_model import HealthFinding, HealthLevel, HealthSeverity
+from zorix_presentation import HealthConsoleRenderer
 
 
 class PackagingImportTest(unittest.TestCase):
@@ -21,6 +27,9 @@ class PackagingImportTest(unittest.TestCase):
         self.assertEqual(zorix.__version__, "0.1.0")
         self.assertTrue(zorix_core_model)
         self.assertTrue(zorix_docker_adapter)
+        self.assertTrue(zorix_health_api)
+        self.assertTrue(zorix_health_engine)
+        self.assertTrue(zorix_health_model)
         self.assertTrue(zorix_linux_adapter)
         self.assertTrue(zorix_mock_adapter)
         self.assertTrue(zorix_plugin_loader)
@@ -38,3 +47,10 @@ class PackagingImportTest(unittest.TestCase):
         self.assertTrue(Resource)
         self.assertTrue(Tool)
         self.assertTrue(Workflow)
+
+    def test_health_exports_import(self) -> None:
+        self.assertTrue(HealthSeverity)
+        self.assertTrue(HealthLevel)
+        self.assertTrue(HealthFinding)
+        self.assertTrue(HealthEngine)
+        self.assertTrue(HealthConsoleRenderer)

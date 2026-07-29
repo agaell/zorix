@@ -11,6 +11,8 @@ from unittest.mock import patch
 
 from zorix.cli import main
 from zorix_core_model import Resource
+from zorix_health_engine import HealthProviderError, HealthResult, HealthStatus
+from zorix_health_model import HealthFinding, HealthLevel, HealthSeverity
 from zorix_resource_graph import ResourceGraphBuilder, ResourceRelation
 from zorix_scan_engine import ScanResult, ScanStatus
 from zorix_topology_engine import TopologyProviderError, TopologyResult, TopologyStatus
@@ -65,6 +67,41 @@ def _topology_result(status: TopologyStatus) -> TopologyResult:
     )
 
 
+def _health_result(
+    status: HealthStatus = HealthStatus.SUCCESS,
+    level: HealthLevel = HealthLevel.HEALTHY,
+) -> HealthResult:
+    findings = ()
+    errors = ()
+    provider_count = 1
+    successful_provider_count = 1
+    if level is HealthLevel.WARNING:
+        findings = (
+            HealthFinding("test", "test.warning", HealthSeverity.WARNING, "service-1", "warning"),
+        )
+    elif level is HealthLevel.CRITICAL:
+        findings = (
+            HealthFinding("test", "test.critical", HealthSeverity.CRITICAL, "service-1", "critical"),
+        )
+
+    if status is HealthStatus.PARTIAL:
+        provider_count = 2
+        errors = (HealthProviderError("example.Broken", "RuntimeError", "broken"),)
+    elif status is HealthStatus.FAILED:
+        successful_provider_count = 0
+        errors = (HealthProviderError("example.Broken", "RuntimeError", "broken"),)
+
+    return HealthResult(
+        status=status,
+        level=level,
+        findings=findings,
+        errors=errors,
+        provider_count=provider_count,
+        successful_provider_count=successful_provider_count,
+        resource_count=1,
+    )
+
+
 class FakeRuntime:
     def __init__(
         self,
@@ -73,20 +110,27 @@ class FakeRuntime:
         error_on_load: Exception | None = None,
         error_on_scan: Exception | None = None,
         error_on_topology: Exception | None = None,
+        error_on_health: Exception | None = None,
         call_order: list[str] | None = None,
         topology_result: TopologyResult | None = None,
+        health_result: HealthResult | None = None,
     ) -> None:
         self.result = result or _result(ScanStatus.SUCCESS)
         self.topology_result = topology_result or _topology_result(TopologyStatus.SUCCESS)
+        self.health_result = health_result or _health_result()
         self.error_on_load = error_on_load
         self.error_on_scan = error_on_scan
         self.error_on_topology = error_on_topology
+        self.error_on_health = error_on_health
         self.call_order = call_order if call_order is not None else []
         self.loaded_paths: list[Path] = []
         self.continue_on_error_values: list[bool] = []
         self.topology_continue_on_error_values: list[bool] = []
+        self.health_continue_on_error_values: list[bool] = []
         self.topology_resources: object | None = None
+        self.health_resources: object | None = None
         self.build_topology_called = False
+        self.evaluate_health_called = False
         self._adapters = (object(),)
 
     def load_plugins(self, path: Path) -> tuple[object, ...]:
@@ -116,6 +160,20 @@ class FakeRuntime:
         if self.error_on_topology is not None:
             raise self.error_on_topology
         return self.topology_result
+
+    def evaluate_health(
+        self,
+        resources: object,
+        *,
+        continue_on_error: bool = False,
+    ) -> HealthResult:
+        self.call_order.append("evaluate_health")
+        self.evaluate_health_called = True
+        self.health_resources = resources
+        self.health_continue_on_error_values.append(continue_on_error)
+        if self.error_on_health is not None:
+            raise self.error_on_health
+        return self.health_result
 
     def adapters(self) -> tuple[object, ...]:
         self.call_order.append("adapters")
@@ -150,6 +208,26 @@ class FakeTopologyRenderer:
 
     def render(self, result: TopologyResult) -> str:
         self.call_order.append("topology_render")
+        self.received_result = result
+        if self.error is not None:
+            raise self.error
+        return self.text
+
+
+class FakeHealthRenderer:
+    def __init__(
+        self,
+        call_order: list[str] | None = None,
+        text: str = "health output\n",
+        error: Exception | None = None,
+    ) -> None:
+        self.call_order = call_order if call_order is not None else []
+        self.text = text
+        self.error = error
+        self.received_result: HealthResult | None = None
+
+    def render(self, result: HealthResult) -> str:
+        self.call_order.append("health_render")
         self.received_result = result
         if self.error is not None:
             raise self.error
@@ -657,6 +735,165 @@ class CliTest(unittest.TestCase):
         self.assertIn("- Service api --depends_on--> Database main\n", stdout)
         self.assertEqual(discover_count, "1")
 
+    def test_health_command_requires_plugins(self) -> None:
+        stderr = StringIO()
+
+        with redirect_stderr(stderr), self.assertRaises(SystemExit) as context:
+            main(["health"])
+
+        self.assertEqual(context.exception.code, 2)
+        self.assertIn("--plugins", stderr.getvalue())
+
+    def test_health_help_uses_argparse_code_zero(self) -> None:
+        stdout = StringIO()
+
+        with redirect_stdout(stdout), self.assertRaises(SystemExit) as context:
+            main(["health", "--help"])
+
+        self.assertEqual(context.exception.code, 0)
+        self.assertIn("Discover resources and evaluate their health.", stdout.getvalue())
+        self.assertIn("--plugins", stdout.getvalue())
+        self.assertIn("--continue-on-error", stdout.getvalue())
+
+    def test_health_passes_plugin_path_as_path(self) -> None:
+        runtime = FakeRuntime()
+
+        _run_main(["health", "--plugins", "plugins"], runtime=runtime)
+
+        self.assertEqual(runtime.loaded_paths, [Path("plugins")])
+
+    def test_health_continue_on_error_flag_passes_true_to_scan_and_health(self) -> None:
+        runtime = FakeRuntime()
+
+        _run_main(["health", "--plugins", "plugins", "--continue-on-error"], runtime=runtime)
+
+        self.assertEqual(runtime.continue_on_error_values, [True])
+        self.assertEqual(runtime.health_continue_on_error_values, [True])
+
+    def test_health_workflow_order_scan_success(self) -> None:
+        call_order: list[str] = []
+        runtime = FakeRuntime(call_order=call_order)
+        scan_renderer = FakeRenderer(call_order=call_order, text="scan output\n")
+        health_renderer = FakeHealthRenderer(call_order=call_order, text="health output\n")
+
+        code, stdout, stderr = _run_main(
+            ["health", "--plugins", "plugins"],
+            runtime=runtime,
+            renderer=scan_renderer,
+            health_renderer=health_renderer,
+        )
+
+        self.assertEqual(code, 0)
+        self.assertEqual(call_order, ["load_plugins", "scan", "evaluate_health", "health_render"])
+        self.assertEqual(stdout, "health output\n")
+        self.assertEqual(stderr, "")
+        self.assertIs(runtime.health_resources, runtime.result.resources)
+        self.assertIs(health_renderer.received_result, runtime.health_result)
+
+    def test_health_scan_partial_prints_scan_and_health(self) -> None:
+        runtime = FakeRuntime(_result(ScanStatus.PARTIAL))
+        scan_renderer = FakeRenderer(text="scan output\n")
+        health_renderer = FakeHealthRenderer(text="health output\n")
+
+        code, stdout, stderr = _run_main(
+            ["health", "--plugins", "plugins"],
+            runtime=runtime,
+            renderer=scan_renderer,
+            health_renderer=health_renderer,
+        )
+
+        self.assertEqual(code, 3)
+        self.assertEqual(stdout, "scan output\n\nhealth output\n")
+        self.assertEqual(stderr, "")
+
+    def test_health_scan_failed_prints_only_scan_result_and_does_not_evaluate_health(self) -> None:
+        runtime = FakeRuntime(_result(ScanStatus.FAILED))
+        scan_renderer = FakeRenderer(text="failed scan\n")
+        health_renderer = FakeHealthRenderer(text="health output\n")
+
+        code, stdout, stderr = _run_main(
+            ["health", "--plugins", "plugins"],
+            runtime=runtime,
+            renderer=scan_renderer,
+            health_renderer=health_renderer,
+        )
+
+        self.assertEqual(code, 4)
+        self.assertEqual(stdout, "failed scan\n")
+        self.assertEqual(stderr, "")
+        self.assertFalse(runtime.evaluate_health_called)
+        self.assertIsNone(health_renderer.received_result)
+
+    def test_health_exit_codes(self) -> None:
+        cases = (
+            (_health_result(HealthStatus.SUCCESS, HealthLevel.HEALTHY), 0),
+            (_health_result(HealthStatus.SUCCESS, HealthLevel.WARNING), 3),
+            (_health_result(HealthStatus.SUCCESS, HealthLevel.CRITICAL), 4),
+            (_health_result(HealthStatus.PARTIAL, HealthLevel.HEALTHY), 3),
+            (_health_result(HealthStatus.FAILED, HealthLevel.HEALTHY), 4),
+        )
+
+        for health_result, expected_code in cases:
+            with self.subTest(health_result=health_result):
+                runtime = FakeRuntime(health_result=health_result)
+                code, _, _ = _run_main(["health", "--plugins", "plugins"], runtime=runtime)
+                self.assertEqual(code, expected_code)
+
+    def test_health_execution_exception_returns_one_without_stdout(self) -> None:
+        runtime = FakeRuntime(error_on_health=RuntimeError("health failed"))
+
+        code, stdout, stderr = _run_main(["health", "--plugins", "plugins"], runtime=runtime)
+
+        self.assertEqual(code, 1)
+        self.assertEqual(stdout, "")
+        self.assertEqual(stderr, "Error: RuntimeError: health failed\n")
+
+    def test_integration_health_with_real_runtime_and_temp_plugin(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            plugin_dir = Path(directory) / "test_cli_health_adapter"
+            plugin_dir.mkdir()
+            (plugin_dir / "__init__.py").write_text(
+                textwrap.dedent(
+                    """
+                    from zorix_core_model import Adapter as BaseAdapter, Resource
+                    from zorix_health_model import HealthFinding, HealthSeverity
+
+
+                    class Adapter(BaseAdapter):
+                        def discover(self):
+                            return [
+                                Resource(
+                                    id="cli-service-1",
+                                    type="service",
+                                    name="cli-api",
+                                    state="active",
+                                )
+                            ]
+
+                        def evaluate_health(self, context):
+                            return [
+                                HealthFinding(
+                                    "test",
+                                    "test.info",
+                                    HealthSeverity.INFO,
+                                    "cli-service-1",
+                                    "observed",
+                                )
+                            ]
+                    """
+                ).strip(),
+                encoding="utf-8",
+            )
+
+            code, stdout, stderr = _run_main_without_patches(["health", "--plugins", directory])
+
+        self.assertEqual(code, 0)
+        self.assertEqual(stderr, "")
+        self.assertIn("Health evaluation: SUCCESS\n", stdout)
+        self.assertIn("Health: HEALTHY\n", stdout)
+        self.assertIn("Findings: 1\n", stdout)
+        self.assertIn("- INFO test.info: observed [cli-service-1]\n", stdout)
+
 
 def _run_main(
     argv: list[str],
@@ -664,6 +901,7 @@ def _run_main(
     runtime: FakeRuntime | None = None,
     renderer: FakeRenderer | None = None,
     topology_renderer: FakeTopologyRenderer | None = None,
+    health_renderer: FakeHealthRenderer | None = None,
 ) -> tuple[int, str, str]:
     stdout = StringIO()
     stderr = StringIO()
@@ -672,13 +910,15 @@ def _run_main(
     topology_renderer = (
         topology_renderer if topology_renderer is not None else FakeTopologyRenderer()
     )
+    health_renderer = health_renderer if health_renderer is not None else FakeHealthRenderer()
 
     with patch("zorix.cli._create_runtime", return_value=runtime):
         with patch("zorix.cli._create_renderer", return_value=renderer):
             with patch("zorix.cli._create_topology_renderer", return_value=topology_renderer):
-                with redirect_stdout(stdout):
-                    with redirect_stderr(stderr):
-                        code = main(argv)
+                with patch("zorix.cli._create_health_renderer", return_value=health_renderer):
+                    with redirect_stdout(stdout):
+                        with redirect_stderr(stderr):
+                            code = main(argv)
 
     return code, stdout.getvalue(), stderr.getvalue()
 

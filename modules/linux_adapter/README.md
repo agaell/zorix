@@ -11,7 +11,8 @@
 - system memory через `/proc/meminfo`;
 - постоянные filesystems через `df`;
 - listening TCP/UDP sockets через `ss`;
-- topology relations от host к обнаруженным ресурсам.
+- topology relations от host к обнаруженным ресурсам;
+- read-only health findings по уже обнаруженным resources.
 
 ## Один target на Adapter
 
@@ -133,7 +134,7 @@ Host преобразуется в `Resource`:
 - `labels`: `{}`
 - `metadata`: `host_id`, `total_bytes`, `available_bytes`, `used_bytes`, `free_bytes`, `buffers_bytes`, `cached_bytes`, `swap_total_bytes`, `swap_free_bytes`, `swap_used_bytes`, `usage_percent`
 
-`usage_percent` хранится без символа `%`. Health thresholds и alerts пока не вычисляются.
+`usage_percent` хранится без символа `%`.
 
 ## Filesystem Resource
 
@@ -182,6 +183,31 @@ linux:host:<target> --listens_on--> linux:socket:<target>:<protocol>:<encoded-ad
 
 Связи строятся только для ресурсов текущего target, имеющих matching `metadata["host_id"]`.
 
+## Health evaluation
+
+`LinuxAdapter` структурно реализует `HealthProvider`.
+
+`evaluate_health(context)` не выполняет SSH-команды и не вызывает `discover()`. Evaluation работает только по `Resource`, уже полученным из snapshot scan.
+
+Текущие встроенные правила Linux MVP:
+
+- failed service даёт `CRITICAL linux.service.failed`, если `state`, `active_state` или `sub_state` равны `failed`;
+- inactive, dead, exited, activating и deactivating services не считаются ошибкой без expected-state policy;
+- filesystem usage `80-89` даёт `WARNING linux.filesystem.usage_high`;
+- filesystem usage `>=90` даёт `CRITICAL linux.filesystem.usage_high`;
+- available memory `<=20%` даёт `WARNING linux.memory.available_low`;
+- available memory `<=10%` даёт `CRITICAL linux.memory.available_low`;
+- socket resources в этой итерации не создают findings.
+
+Некорректные metadata отдельного resource не прерывают evaluation: такой resource пропускается. Thresholds пока встроены в Linux MVP и не настраиваются.
+
+CLI:
+
+```bash
+export ZORIX_SSH_TARGET=tandem
+zorix health --plugins ./examples/plugins/linux
+```
+
 ## Python API topology
 
 ```python
@@ -224,13 +250,13 @@ Command errors прерывают текущий adapter и обрабатыва
 - один target на adapter;
 - host, services, memory, persistent filesystems и listening sockets;
 - topology не вызывает SSH;
+- health evaluation не вызывает SSH;
 - нет management actions;
 - нет `journalctl`;
 - нет процессов;
 - socket не связан с service;
 - нет firewall analysis;
-- нет filesystem health policy;
-- нет memory health policy;
+- нет настраиваемых health thresholds;
 - нет CPU load, disk I/O или SMART;
 - нет `sudo`;
 - нет нескольких hosts в одном adapter;

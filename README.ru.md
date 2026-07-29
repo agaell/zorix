@@ -55,11 +55,13 @@ Zorix — open-source платформа для исследования, мод
 - Docker Adapter строит связи container `uses_image` image и container `connected_to` network;
 - read-only Linux Adapter обнаруживает один SSH host, systemd services, system memory, persistent filesystems и listening TCP/UDP sockets через OpenSSH;
 - Linux Adapter строит связи host `hosts` service, `has_memory`, `mounts` и `listens_on`;
+- Linux Adapter выполняет базовую read-only health evaluation по уже обнаруженным resources;
 - фундамент Resource Graph предоставляет валидированную in-memory модель ресурсов и направленных связей.
 - Topology Provider API задает необязательную capability, через которую адаптеры смогут предоставлять направленные связи между ресурсами.
 - Topology Engine строит Resource Graph из уже обнаруженных ресурсов и optional topology providers.
+- Health Model, Health API и Health Engine добавляют read-only вертикальный срез health evaluation.
 - Runtime предоставляет Python API для явного цикла сканирования и построения топологии.
-- Presentation Layer умеет форматировать scan results и topology results через Python API.
+- Presentation Layer умеет форматировать scan results, topology results и health results через Python API.
 
 ## Архитектурная основа
 
@@ -72,6 +74,9 @@ Registry
     ├── ScanEngine
     │       ↓
     │   ScanResult
+    ├── HealthEngine
+    │       ↓
+    │   HealthResult
     └── TopologyEngine
             ↓
        TopologyResult
@@ -79,7 +84,7 @@ Registry
        ResourceGraph
 ```
 
-Runtime может строить topology через Python API. CLI также предоставляет команду `topology`, которая выполняет inventory scan, строит topology и выводит resources вместе с relations. CLI `scan` по-прежнему выводит только inventory, а команды `graph` пока нет.
+Runtime может строить topology и выполнять health evaluation через Python API. CLI также предоставляет команды `topology` и `health`. CLI `scan` по-прежнему выводит только inventory, а команды `graph` пока нет.
 
 Topology строится только для adapters, реализующих `TopologyProvider`. Docker Adapter теперь предоставляет Docker container-to-image и container-to-network topology через этот API.
 
@@ -121,7 +126,14 @@ export ZORIX_SSH_TARGET=tandem
 zorix scan --plugins ./examples/plugins/linux
 ```
 
-Текущая Linux-поддержка не включает управление systemd, journal logs, process ownership для sockets, public port accessibility, firewall analysis, disk health, memory alerts, CPU load, sudo или несколько hosts в одном adapter.
+Health evaluation Linux выполняется по тому же snapshot без повторного SSH:
+
+```bash
+export ZORIX_SSH_TARGET=tandem
+zorix health --plugins ./examples/plugins/linux
+```
+
+Текущая Linux-поддержка не включает управление systemd, journal logs, process ownership для sockets, public port accessibility, firewall analysis, настраиваемые health thresholds, CPU load, sudo или несколько hosts в одном adapter.
 
 ## Статус проекта
 
@@ -182,6 +194,21 @@ zorix topology \
   --continue-on-error
 ```
 
+Выполнить health evaluation через CLI:
+
+```bash
+zorix health --plugins ./examples/plugins/linux
+```
+
+`zorix health`:
+
+- выполняет inventory scan;
+- оценивает health по обнаруженным resources без повторного SSH;
+- при успешном scan выводит только health report;
+- при partial scan сначала выводит scan result, затем health report.
+
+Linux health MVP считает failed services critical, filesystem usage `>=80` warning, filesystem usage `>=90` critical, available memory `<=20%` warning и available memory `<=10%` critical. Inactive services и sockets в этой итерации findings не создают.
+
 `zorix topology`:
 
 - выполняет inventory scan;
@@ -220,5 +247,5 @@ Exit codes:
 - `0` — `SUCCESS`
 - `1` — execution error
 - `2` — usage error
-- `3` — `PARTIAL` workflow
-- `4` — `FAILED` workflow
+- `3` — `PARTIAL` workflow или warning health
+- `4` — `FAILED` workflow или critical health

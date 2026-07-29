@@ -1,11 +1,14 @@
 from __future__ import annotations
 
 from zorix_core_model import Adapter, Resource
+from zorix_health_api import HealthContext
+from zorix_health_model import HealthFinding
 from zorix_resource_graph import ResourceRelation
 from zorix_topology_api import TopologyContext
 
 from .command import SshCommandRunner, SubprocessSshCommandRunner
 from .filesystems import filesystems_to_resources
+from .health import evaluate_linux_health
 from .inventory import host_to_resource, services_to_resources, validate_target
 from .memory import memory_to_resource
 from .snapshot import collect_linux_snapshot
@@ -53,3 +56,6 @@ class LinuxAdapter(Adapter):
 
     def discover_relations(self, context: TopologyContext) -> list[ResourceRelation]:
         return host_to_service_relations(target=self.target, context=context)
+
+    def evaluate_health(self, context: HealthContext) -> list[HealthFinding]:
+        return evaluate_linux_health(target=self.target, context=context)

@@ -5,7 +5,9 @@ from pathlib import Path
 import sys
 from typing import Sequence
 
-from zorix_presentation import ConsoleRenderer, TopologyConsoleRenderer
+from zorix_health_engine import HealthStatus
+from zorix_health_model import HealthLevel
+from zorix_presentation import ConsoleRenderer, HealthConsoleRenderer, TopologyConsoleRenderer
 from zorix_runtime import ZorixRuntime
 from zorix_scan_engine import ScanStatus
 from zorix_topology_engine import TopologyStatus
@@ -31,6 +33,13 @@ def main(argv: Sequence[str] | None = None) -> int:
     if args.command == "topology":
         try:
             return _run_topology(args)
+        except Exception as error:
+            print(_format_execution_error(error), file=sys.stderr)
+            return 1
+
+    if args.command == "health":
+        try:
+            return _run_health(args)
         except Exception as error:
             print(_format_execution_error(error), file=sys.stderr)
             return 1
@@ -85,6 +94,23 @@ def _build_parser() -> argparse.ArgumentParser:
         help="continue scanning and topology building after adapter/provider errors",
     )
 
+    health_parser = subparsers.add_parser(
+        "health",
+        help="discover resources and evaluate health",
+        description="Discover resources and evaluate their health.",
+    )
+    health_parser.add_argument(
+        "--plugins",
+        type=Path,
+        required=True,
+        help="path to a directory with adapter plugins",
+    )
+    health_parser.add_argument(
+        "--continue-on-error",
+        action="store_true",
+        help="continue scanning and health evaluation after adapter/provider errors",
+    )
+
     return parser
 
 
@@ -126,6 +152,37 @@ def _run_topology(args: argparse.Namespace) -> int:
     return _topology_workflow_exit_code(scan_result.status, topology_result.status)
 
 
+def _run_health(args: argparse.Namespace) -> int:
+    runtime = _create_runtime()
+    scan_renderer = _create_renderer()
+    health_renderer = _create_health_renderer()
+
+    runtime.load_plugins(args.plugins)
+    scan_result = runtime.scan(continue_on_error=args.continue_on_error)
+
+    if scan_result.status is ScanStatus.FAILED:
+        adapter_count = len(runtime.adapters())
+        scan_text = scan_renderer.render(scan_result, adapter_count=adapter_count)
+        print(scan_text, end="")
+        return 4
+
+    health_result = runtime.evaluate_health(
+        scan_result.resources,
+        continue_on_error=args.continue_on_error,
+    )
+    health_text = health_renderer.render(health_result)
+
+    if scan_result.status is ScanStatus.PARTIAL:
+        adapter_count = len(runtime.adapters())
+        scan_text = scan_renderer.render(scan_result, adapter_count=adapter_count)
+        text = _join_rendered_sections(scan_text, health_text)
+    else:
+        text = health_text
+
+    print(text, end="")
+    return _health_workflow_exit_code(scan_result.status, health_result.status, health_result.level)
+
+
 def _create_runtime() -> ZorixRuntime:
     return ZorixRuntime()
 
@@ -136,6 +193,10 @@ def _create_renderer() -> ConsoleRenderer:
 
 def _create_topology_renderer() -> TopologyConsoleRenderer:
     return TopologyConsoleRenderer()
+
+
+def _create_health_renderer() -> HealthConsoleRenderer:
+    return HealthConsoleRenderer()
 
 
 def _exit_code(status: ScanStatus) -> int:
@@ -165,6 +226,26 @@ def _topology_workflow_exit_code(
         return 0
 
     return 1
+
+
+def _health_workflow_exit_code(
+    scan_status: ScanStatus,
+    health_status: HealthStatus,
+    health_level: HealthLevel,
+) -> int:
+    if scan_status is ScanStatus.FAILED:
+        return 4
+    if health_status is HealthStatus.FAILED:
+        return 4
+    if health_level is HealthLevel.CRITICAL:
+        return 4
+    if scan_status is ScanStatus.PARTIAL:
+        return 3
+    if health_status is HealthStatus.PARTIAL:
+        return 3
+    if health_level is HealthLevel.WARNING:
+        return 3
+    return 0
 
 
 def _join_rendered_sections(first: str, second: str) -> str:

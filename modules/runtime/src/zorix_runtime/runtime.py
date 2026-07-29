@@ -4,6 +4,7 @@ from collections.abc import Iterable
 from pathlib import Path
 
 from zorix_core_model import Adapter, Resource
+from zorix_health_engine import HealthEngine, HealthResult
 from zorix_plugin_loader import PluginLoader
 from zorix_registry import Registry
 from zorix_scan_engine import ScanEngine, ScanResult
@@ -19,6 +20,7 @@ class ZorixRuntime:
         self._plugin_loader = plugin_loader if plugin_loader is not None else PluginLoader()
         self._registry = registry if registry is not None else Registry()
         self._scan_engine = ScanEngine(self._registry)
+        self._health_engine = HealthEngine(self._registry)
         self._topology_engine = TopologyEngine(self._registry)
 
     def load_plugins(self, path: str | Path) -> tuple[Adapter, ...]:
@@ -36,6 +38,17 @@ class ZorixRuntime:
         continue_on_error: bool = False,
     ) -> TopologyResult:
         return self._topology_engine.build(
+            resources,
+            continue_on_error=continue_on_error,
+        )
+
+    def evaluate_health(
+        self,
+        resources: Iterable[Resource],
+        *,
+        continue_on_error: bool = False,
+    ) -> HealthResult:
+        return self._health_engine.evaluate(
             resources,
             continue_on_error=continue_on_error,
         )
