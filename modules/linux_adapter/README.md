@@ -8,7 +8,10 @@
 - systemd services;
 - состояние systemd services;
 - базовую информацию об ОС, ядре и архитектуре;
-- topology relation `host --hosts--> service`.
+- system memory через `/proc/meminfo`;
+- постоянные filesystems через `df`;
+- listening TCP/UDP sockets через `ss`;
+- topology relations от host к обнаруженным ресурсам.
 
 ## Один target на Adapter
 
@@ -48,6 +51,9 @@ env LC_ALL=C uname -r
 env LC_ALL=C uname -m
 env LC_ALL=C cat /etc/os-release
 env LC_ALL=C systemctl list-units --type=service --all --no-legend --no-pager --plain --full
+env LC_ALL=C cat /proc/meminfo
+env LC_ALL=C df -B1 --output=source,fstype,size,used,avail,pcent,target
+env LC_ALL=C ss --no-header --listening --tcp --udp --numeric
 ```
 
 SSH запускается через `subprocess.run(..., shell=False)` с:
@@ -83,6 +89,51 @@ Host преобразуется в `Resource`:
 
 Порядок services совпадает с выводом `systemctl`. Дубликаты unit удаляются по `Resource.id`, первое появление сохраняется.
 
+## Memory Resource
+
+Память host преобразуется в один `Resource`:
+
+- `id`: `linux:memory:<target>`
+- `type`: `memory`
+- `name`: `System memory`
+- `state`: `present`
+- `labels`: `{}`
+- `metadata`: `host_id`, `total_bytes`, `available_bytes`, `used_bytes`, `free_bytes`, `buffers_bytes`, `cached_bytes`, `swap_total_bytes`, `swap_free_bytes`, `swap_used_bytes`, `usage_percent`
+
+`usage_percent` хранится без символа `%`. Health thresholds и alerts пока не вычисляются.
+
+## Filesystem Resource
+
+Каждая постоянная filesystem из `df` преобразуется в `Resource`:
+
+- `id`: `linux:filesystem:<target>:<encoded-mountpoint>`
+- `type`: `filesystem`
+- `name`: mountpoint, например `/`
+- `state`: `mounted`
+- `labels`: `{}`
+- `metadata`: `host_id`, `source`, `filesystem_type`, `size_bytes`, `used_bytes`, `available_bytes`, `usage_percent`, `mountpoint`
+
+Mountpoint кодируется через `urllib.parse.quote(..., safe="")`.
+
+Псевдо- и временные filesystem types исключаются: например `tmpfs`, `proc`, `sysfs`, `squashfs`, `overlay`.
+
+## Socket Resource
+
+Каждый listening TCP/UDP socket из `ss` преобразуется в `Resource`:
+
+- `id`: `linux:socket:<target>:<protocol>:<encoded-address>:<port>`
+- `type`: `socket`
+- `name`: например `tcp://0.0.0.0:443`, `udp://*:68`, `tcp://[::]:443`
+- `state`: `listening`
+- `labels`: `{}`
+- `metadata`: `host_id`, `protocol`, `socket_state`, `bind_address`, `port`, `bind_scope`, `address_family`
+
+`bind_scope` может быть `all_interfaces`, `loopback`, `specific_interface` или `unknown`.
+
+Bind на `0.0.0.0` или `::` не означает публичную доступность: adapter не анализирует firewall, NAT, security groups или routing.
+
+Process/PID ownership для sockets пока не обнаруживается.
+
 ## Topology
 
 `LinuxAdapter` структурно реализует `TopologyProvider`.
@@ -91,9 +142,12 @@ Host преобразуется в `Resource`:
 
 ```text
 linux:host:<target> --hosts--> linux:service:<target>:<unit>
+linux:host:<target> --has_memory--> linux:memory:<target>
+linux:host:<target> --mounts--> linux:filesystem:<target>:<encoded-mountpoint>
+linux:host:<target> --listens_on--> linux:socket:<target>:<protocol>:<encoded-address>:<port>
 ```
 
-Связи строятся только для services текущего target, имеющих matching `metadata["host_id"]`.
+Связи строятся только для ресурсов текущего target, имеющих matching `metadata["host_id"]`.
 
 ## Python API topology
 
@@ -108,6 +162,13 @@ topology_result = runtime.build_topology(scan_result.resources)
 
 for relation in topology_result.graph.relations():
     print(relation.source_id, relation.type, relation.target_id)
+```
+
+CLI topology:
+
+```bash
+export ZORIX_SSH_TARGET=tandem
+zorix topology --plugins ./examples/plugins/linux
 ```
 
 ## Ошибки
@@ -128,14 +189,16 @@ Command errors прерывают текущий adapter и обрабатыва
 
 - только systemd Linux;
 - один target на adapter;
-- только host и services;
+- host, services, memory, persistent filesystems и listening sockets;
 - topology не вызывает SSH;
 - нет management actions;
 - нет `journalctl`;
 - нет процессов;
-- нет дисков и файловых систем;
-- нет listening sockets;
-- нет CPU/RAM metrics;
+- socket не связан с service;
+- нет firewall analysis;
+- нет filesystem health policy;
+- нет memory health policy;
+- нет CPU load, disk I/O или SMART;
 - нет `sudo`;
 - нет нескольких hosts в одном adapter;
 - нет Paramiko, async, retries или конфигурационного файла Zorix.

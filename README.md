@@ -49,8 +49,8 @@ Zorix is currently in early development.
 
 - read-only Docker Adapter discovers Docker containers, images, and networks.
 - Docker Adapter builds container `uses_image` image and container `connected_to` network relations.
-- read-only Linux Adapter discovers one SSH host and systemd services through OpenSSH.
-- Linux Adapter builds host `hosts` systemd service relations.
+- read-only Linux Adapter discovers one SSH host, systemd services, system memory, persistent filesystems, and listening TCP/UDP sockets through OpenSSH.
+- Linux Adapter builds host `hosts` service, `has_memory`, `mounts`, and `listens_on` relations.
 - Resource Graph foundation provides a validated in-memory model for resources and directed relations.
 - Topology Provider API defines an optional capability for adapters to provide directed resource relations.
 - Topology Engine builds a Resource Graph from discovered resources and optional topology providers.
@@ -63,7 +63,7 @@ Run Docker discovery through the example plugin:
 zorix scan --plugins ./examples/plugins/docker
 ```
 
-Run Linux host and systemd service discovery through OpenSSH:
+Run Linux host inventory through OpenSSH:
 
 ```bash
 export ZORIX_SSH_TARGET=tandem
@@ -121,7 +121,7 @@ text = TopologyConsoleRenderer().render(topology_result)
 print(text, end="")
 ```
 
-Current Docker support does not include Docker management, Docker Compose topology, volumes, a CLI `graph` command, or a web topology UI. Current Linux support does not include systemd management, journal logs, processes, disks, ports, metrics, sudo, or multiple hosts in one adapter. Current CLI `scan` still displays only inventory.
+Current Docker support does not include Docker management, Docker Compose topology, volumes, a CLI `graph` command, or a web topology UI. Current Linux support does not include systemd management, journal logs, process ownership for sockets, public port accessibility, firewall analysis, disk health, memory alerts, CPU load, sudo, or multiple hosts in one adapter. Current CLI `scan` still displays only inventory.
 
 ## Project Status
 

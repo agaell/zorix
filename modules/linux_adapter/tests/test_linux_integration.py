@@ -6,6 +6,7 @@ import unittest
 from unittest.mock import patch
 
 from zorix_linux_adapter import LinuxAdapter, LinuxConfigurationError
+from zorix_presentation import TopologyConsoleRenderer
 from zorix_plugin_loader import PluginLoader
 from zorix_registry import Registry
 from zorix_scan_engine import ScanEngine, ScanStatus
@@ -39,7 +40,19 @@ class LinuxIntegrationTest(unittest.TestCase):
             (
                 "nginx.service loaded active running Nginx\n"
                 "tandem.service loaded active running Tandem\n"
-                "postgresql.service loaded inactive dead PostgreSQL\n"
+                "postgresql.service loaded active running PostgreSQL\n"
+            ),
+            (
+                "MemTotal:       8192000 kB\n"
+                "MemAvailable:   4096000 kB\n"
+                "SwapTotal:      2097152 kB\n"
+                "SwapFree:       1048576 kB\n"
+            ),
+            "/dev/vda1 ext4 50000000000 20000000000 30000000000 40% /\n",
+            (
+                "tcp LISTEN 0 511 0.0.0.0:80 0.0.0.0:*\n"
+                "tcp LISTEN 0 511 0.0.0.0:443 0.0.0.0:*\n"
+                "tcp LISTEN 0 128 127.0.0.1:5432 0.0.0.0:*\n"
             ),
         )
         adapter = LinuxAdapter("tandem", runner)
@@ -49,24 +62,36 @@ class LinuxIntegrationTest(unittest.TestCase):
         scan_result = ScanEngine(registry).scan()
         ssh_calls_after_scan = list(runner.calls)
         topology_result = TopologyEngine(registry).build(scan_result.resources)
+        rendered = TopologyConsoleRenderer().render(topology_result)
         graph = topology_result.graph
         host_id = "linux:host:tandem"
 
         self.assertIs(scan_result.status, ScanStatus.SUCCESS)
-        self.assertEqual(len(scan_result.resources), 4)
+        self.assertEqual(len(scan_result.resources), 9)
         self.assertEqual(sum(1 for resource in scan_result.resources if resource.type == "host"), 1)
         self.assertEqual(sum(1 for resource in scan_result.resources if resource.type == "service"), 3)
+        self.assertEqual(sum(1 for resource in scan_result.resources if resource.type == "memory"), 1)
+        self.assertEqual(sum(1 for resource in scan_result.resources if resource.type == "filesystem"), 1)
+        self.assertEqual(sum(1 for resource in scan_result.resources if resource.type == "socket"), 3)
         self.assertIs(topology_result.status, TopologyStatus.SUCCESS)
         self.assertEqual(topology_result.provider_count, 1)
         self.assertEqual(topology_result.successful_provider_count, 1)
-        self.assertEqual(len(graph.relations()), 3)
-        self.assertTrue(all(relation.type == "hosts" for relation in graph.relations()))
+        self.assertEqual(len(graph.relations()), 8)
+        self.assertEqual(sum(1 for relation in graph.relations() if relation.type == "hosts"), 3)
+        self.assertEqual(sum(1 for relation in graph.relations() if relation.type == "has_memory"), 1)
+        self.assertEqual(sum(1 for relation in graph.relations() if relation.type == "mounts"), 1)
+        self.assertEqual(sum(1 for relation in graph.relations() if relation.type == "listens_on"), 3)
         self.assertEqual(
             [relation.target_id for relation in graph.outgoing(host_id)],
             [
                 "linux:service:tandem:nginx.service",
                 "linux:service:tandem:tandem.service",
                 "linux:service:tandem:postgresql.service",
+                "linux:memory:tandem",
+                "linux:filesystem:tandem:%2F",
+                "linux:socket:tandem:tcp:0.0.0.0:80",
+                "linux:socket:tandem:tcp:0.0.0.0:443",
+                "linux:socket:tandem:tcp:127.0.0.1:5432",
             ],
         )
         self.assertEqual(
@@ -79,11 +104,19 @@ class LinuxIntegrationTest(unittest.TestCase):
                 "linux:service:tandem:nginx.service",
                 "linux:service:tandem:tandem.service",
                 "linux:service:tandem:postgresql.service",
+                "linux:memory:tandem",
+                "linux:filesystem:tandem:%2F",
+                "linux:socket:tandem:tcp:0.0.0.0:80",
+                "linux:socket:tandem:tcp:0.0.0.0:443",
+                "linux:socket:tandem:tcp:127.0.0.1:5432",
             ],
         )
         postgresql = graph.resource("linux:service:tandem:postgresql.service")
-        self.assertEqual(postgresql.state, "inactive")
+        self.assertEqual(postgresql.state, "active")
         self.assertEqual(runner.calls, ssh_calls_after_scan)
+        self.assertIn("--has_memory-->", rendered)
+        self.assertIn("--mounts-->", rendered)
+        self.assertIn("--listens_on-->", rendered)
 
 
 class LinuxPluginLoaderIntegrationTest(unittest.TestCase):

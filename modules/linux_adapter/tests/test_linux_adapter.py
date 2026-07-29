@@ -4,7 +4,7 @@ import unittest
 from unittest.mock import patch
 
 from zorix_core_model import Resource
-from zorix_linux_adapter import LinuxAdapter
+from zorix_linux_adapter import LinuxAdapter, LinuxOutputError
 
 
 HOSTNAME_ARGS = ("env", "LC_ALL=C", "hostname")
@@ -22,6 +22,24 @@ SYSTEMCTL_ARGS = (
     "--no-pager",
     "--plain",
     "--full",
+)
+MEMINFO_ARGS = ("env", "LC_ALL=C", "cat", "/proc/meminfo")
+FILESYSTEMS_ARGS = (
+    "env",
+    "LC_ALL=C",
+    "df",
+    "-B1",
+    "--output=source,fstype,size,used,avail,pcent,target",
+)
+SOCKETS_ARGS = (
+    "env",
+    "LC_ALL=C",
+    "ss",
+    "--no-header",
+    "--listening",
+    "--tcp",
+    "--udp",
+    "--numeric",
 )
 
 
@@ -61,6 +79,9 @@ class LinuxAdapterTest(unittest.TestCase):
                 ("tandem", ARCH_ARGS),
                 ("tandem", OS_RELEASE_ARGS),
                 ("tandem", SYSTEMCTL_ARGS),
+                ("tandem", MEMINFO_ARGS),
+                ("tandem", FILESYSTEMS_ARGS),
+                ("tandem", SOCKETS_ARGS),
             ],
         )
 
@@ -92,7 +113,7 @@ class LinuxAdapterTest(unittest.TestCase):
         resources = LinuxAdapter("tandem", _runner()).discover()
         services = resources[1:]
 
-        self.assertEqual([service.name for service in services], ["nginx.service", "postgresql.service"])
+        self.assertEqual([service.name for service in services[:2]], ["nginx.service", "postgresql.service"])
         self.assertEqual(services[0].id, "linux:service:tandem:nginx.service")
         self.assertEqual(services[0].type, "service")
         self.assertEqual(services[0].state, "active")
@@ -108,7 +129,7 @@ class LinuxAdapterTest(unittest.TestCase):
     def test_empty_services_returns_only_host(self) -> None:
         resources = LinuxAdapter("tandem", _runner(services="")).discover()
 
-        self.assertEqual(len(resources), 1)
+        self.assertEqual([resource.type for resource in resources], ["host", "memory", "filesystem", "socket"])
         self.assertEqual(resources[0].type, "host")
 
     def test_duplicate_services_are_removed(self) -> None:
@@ -122,9 +143,46 @@ class LinuxAdapterTest(unittest.TestCase):
             ),
         ).discover()
 
-        self.assertEqual(len(resources), 2)
+        self.assertEqual(resources[1].type, "service")
         self.assertEqual(resources[1].state, "active")
         self.assertEqual(resources[1].metadata["description"], "First")
+
+    def test_new_resource_order(self) -> None:
+        resources = LinuxAdapter("tandem", _runner()).discover()
+
+        self.assertEqual(
+            [resource.type for resource in resources],
+            ["host", "service", "service", "memory", "filesystem", "socket"],
+        )
+
+    def test_empty_df_and_ss_do_not_break_scan(self) -> None:
+        resources = LinuxAdapter(
+            "tandem",
+            _runner(filesystems="", sockets=""),
+        ).discover()
+
+        self.assertEqual([resource.type for resource in resources], ["host", "service", "service", "memory"])
+
+    def test_malformed_filesystem_and_socket_rows_are_skipped(self) -> None:
+        resources = LinuxAdapter(
+            "tandem",
+            _runner(filesystems="bad\n", sockets="bad\n"),
+        ).discover()
+
+        self.assertEqual([resource.type for resource in resources], ["host", "service", "service", "memory"])
+
+    def test_invalid_meminfo_raises_output_error(self) -> None:
+        with self.assertRaises(LinuxOutputError):
+            LinuxAdapter("tandem", _runner(meminfo="MemFree: 1 kB\n")).discover()
+
+    def test_new_command_error_is_propagated(self) -> None:
+        error = RuntimeError("df failed")
+        runner = FakeSshCommandRunner(*_outputs()[:6], error)
+
+        with self.assertRaises(RuntimeError) as context:
+            LinuxAdapter("tandem", runner).discover()
+
+        self.assertIs(context.exception, error)
 
     def test_command_error_is_propagated(self) -> None:
         error = RuntimeError("ssh failed")
@@ -150,7 +208,7 @@ class LinuxAdapterTest(unittest.TestCase):
         with patch("zorix_linux_adapter.adapter.SubprocessSshCommandRunner") as default_runner:
             resources = LinuxAdapter("tandem", runner).discover()
 
-        self.assertEqual(len(resources), 3)
+        self.assertEqual(len(resources), 6)
         default_runner.assert_not_called()
 
 
@@ -158,9 +216,18 @@ def _runner(
     *,
     hostname: str = "tandem-server\n",
     services: str | None = None,
+    meminfo: str | None = None,
+    filesystems: str | None = None,
+    sockets: str | None = None,
 ) -> FakeSshCommandRunner:
     return FakeSshCommandRunner(
-        *_outputs(hostname=hostname, services=services),
+        *_outputs(
+            hostname=hostname,
+            services=services,
+            meminfo=meminfo,
+            filesystems=filesystems,
+            sockets=sockets,
+        ),
     )
 
 
@@ -168,12 +235,21 @@ def _outputs(
     *,
     hostname: str = "tandem-server\n",
     services: str | None = None,
+    meminfo: str | None = None,
+    filesystems: str | None = None,
+    sockets: str | None = None,
 ) -> tuple[str, ...]:
     if services is None:
         services = (
             "nginx.service loaded active running A web server\n"
             "postgresql.service loaded inactive dead PostgreSQL\n"
         )
+    if meminfo is None:
+        meminfo = "MemTotal: 8192000 kB\nMemAvailable: 4096000 kB\n"
+    if filesystems is None:
+        filesystems = "/dev/vda1 ext4 100 20 80 20% /\n"
+    if sockets is None:
+        sockets = "tcp LISTEN 0 511 0.0.0.0:443 0.0.0.0:*\n"
 
     return (
         hostname,
@@ -181,6 +257,9 @@ def _outputs(
         "x86_64\n",
         'ID=ubuntu\nNAME="Ubuntu"\nPRETTY_NAME="Ubuntu 24.04 LTS"\nVERSION_ID="24.04"\n',
         services,
+        meminfo,
+        filesystems,
+        sockets,
     )
 
 

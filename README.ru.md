@@ -53,8 +53,8 @@ Zorix — open-source платформа для исследования, мод
 
 - read-only Docker Adapter обнаруживает Docker containers, images и networks;
 - Docker Adapter строит связи container `uses_image` image и container `connected_to` network;
-- read-only Linux Adapter обнаруживает один SSH host и systemd services через OpenSSH;
-- Linux Adapter строит связи host `hosts` systemd service;
+- read-only Linux Adapter обнаруживает один SSH host, systemd services, system memory, persistent filesystems и listening TCP/UDP sockets через OpenSSH;
+- Linux Adapter строит связи host `hosts` service, `has_memory`, `mounts` и `listens_on`;
 - фундамент Resource Graph предоставляет валидированную in-memory модель ресурсов и направленных связей.
 - Topology Provider API задает необязательную capability, через которую адаптеры смогут предоставлять направленные связи между ресурсами.
 - Topology Engine строит Resource Graph из уже обнаруженных ресурсов и optional topology providers.
@@ -114,14 +114,14 @@ print(text, end="")
 
 Текущая Docker-поддержка не включает управление Docker, Docker Compose topology, volumes, CLI-команду `graph`, а также web UI для topology. Текущая CLI `scan` по-прежнему отображает только inventory.
 
-Linux host и systemd services можно обнаружить через OpenSSH:
+Linux host inventory можно обнаружить через OpenSSH:
 
 ```bash
 export ZORIX_SSH_TARGET=tandem
 zorix scan --plugins ./examples/plugins/linux
 ```
 
-Текущая Linux-поддержка не включает управление systemd, journal logs, процессы, диски, порты, metrics, sudo или несколько hosts в одном adapter.
+Текущая Linux-поддержка не включает управление systemd, journal logs, process ownership для sockets, public port accessibility, firewall analysis, disk health, memory alerts, CPU load, sudo или несколько hosts в одном adapter.
 
 ## Статус проекта
 
