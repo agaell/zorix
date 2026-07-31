@@ -1,8 +1,6 @@
 <p align="center">
-  <img src="assets/source/logo.png" alt="Zorix" width="220">
+  <img src="assets/source/logo.png" alt="Zorix" width="100%">
 </p>
-
-<h1 align="center">Zorix</h1>
 
 <p align="center">
   <strong>Open-source платформа инфраструктурного интеллекта</strong>
