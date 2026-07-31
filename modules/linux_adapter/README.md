@@ -13,7 +13,8 @@
 - listening TCP/UDP sockets через `ss`;
 - topology relations от host к обнаруженным ресурсам;
 - read-only health findings по уже обнаруженным resources;
-- dry-run action plans для ограниченного набора systemd service actions.
+- dry-run action plans для ограниченного набора systemd service actions;
+- безопасное исполнение подтверждённых systemd service actions для уже построенных планов.
 
 ## Один target на Adapter
 
@@ -221,7 +222,7 @@ zorix health --plugins ./examples/plugins/linux
 - `service.stop` -> `linux.systemd.stop`, risk `HIGH`;
 - `service.restart` -> `linux.systemd.restart`, risk `MEDIUM`.
 
-Все три действия требуют будущего подтверждения. В текущей итерации confirmation prompt и execution отсутствуют.
+Все три действия требуют подтверждения перед исполнением.
 
 Resource подходит только если это `linux:service:<target>:<unit>`, `metadata["host_id"]` указывает на текущий host, `metadata["unit"]` непустой, заканчивается на `.service`, не начинается с `-`, не содержит whitespace/control characters и совпадает с `Resource.id`.
 
@@ -234,6 +235,41 @@ zorix action plan \
   linux:service:tandem:tandem.service \
   --plugins ./examples/plugins/linux
 ```
+
+## Action execution
+
+`LinuxAdapter` структурно реализует `ActionExecutor` для планов, которые сам же умеет строить.
+
+Поддерживаемые операции исполнения:
+
+- `service.start` -> `systemctl start`;
+- `service.stop` -> `systemctl stop`;
+- `service.restart` -> `systemctl restart`.
+
+Перед SSH-вызовом executor повторно проверяет план:
+
+- `source` должен быть `linux`;
+- `provider` должен совпадать с текущим классом `LinuxAdapter`;
+- action и operation должны совпадать с allowlist;
+- target resource должен существовать в `ActionContext`;
+- resource должен быть Linux service текущего target;
+- `metadata["unit"]`, `metadata["ssh_target"]` и `metadata["host_id"]` должны совпадать с resource и adapter;
+- unit должен пройти тот же строгий allowlist, что и при planning;
+- план должен требовать подтверждения.
+
+Если проверка не пройдена, runner не вызывается.
+
+Execution выполняет один SSH-вызов:
+
+```text
+ssh ... <target> sh -s -- <action-token> <unit>
+```
+
+Статический POSIX `sh` script передаётся в stdin. Он не формируется из пользовательского ввода и не содержит `sudo`, `eval`, shell interpolation пользовательских команд или произвольных аргументов.
+
+Удалённый script выводит структурированные markers `__ZORIX_SYSTEMD_ACTION_V1_BEGIN__` и `__ZORIX_SYSTEMD_ACTION_V1_END__`. Parser требует полный набор известных ключей, отклоняет дубликаты, неизвестные ключи и content вне markers.
+
+`SUCCESS` возвращается только если `systemctl` завершился с exit code `0` и итоговый `ActiveState` соответствует ожидаемому состоянию. Ошибки SSH преобразуются в `FAILED` результат с коротким сообщением без traceback и без полного stderr в metadata.
 
 Arbitrary shell commands, sudo, action parameters and custom command arguments are not supported.
 

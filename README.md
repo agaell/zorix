@@ -53,6 +53,7 @@ Zorix is currently in early development.
 - Linux Adapter builds host `hosts` service, `has_memory`, `mounts`, and `listens_on` relations.
 - Linux Adapter evaluates basic read-only health findings from already discovered resources.
 - Linux Adapter creates dry-run action plans for systemd service start, stop, and restart.
+- Linux Adapter executes confirmed systemd service start, stop, and restart plans through a fixed SSH executor.
 - Resource Graph foundation provides a validated in-memory model for resources and directed relations.
 - Topology Provider API defines an optional capability for adapters to provide directed resource relations.
 - Topology Engine builds a Resource Graph from discovered resources and optional topology providers.
@@ -91,6 +92,17 @@ zorix action plan \
   --plugins ./examples/plugins/linux
 ```
 
+Execute a confirmed Linux action plan:
+
+```bash
+export ZORIX_SSH_TARGET=tandem
+zorix action execute \
+  service.restart \
+  linux:service:tandem:zorix-action-smoke.service \
+  --plugins ./examples/plugins/linux \
+  --confirm
+```
+
 ## Architecture Foundation
 
 Current topology foundation:
@@ -108,6 +120,9 @@ Registry
     ├── ActionEngine
     │       ↓
     │   ActionPlanResult
+    ├── ActionExecutionEngine
+    │       ↓
+    │   ActionExecutionResult
     └── TopologyEngine
             ↓
        TopologyResult
@@ -115,7 +130,7 @@ Registry
        ResourceGraph
 ```
 
-Runtime can build topology, evaluate health, and plan actions through its Python API. The CLI also provides `topology`, `health`, and `action plan` commands. CLI `scan` still outputs only inventory, and there is no `graph` command yet.
+Runtime can build topology, evaluate health, plan actions, and execute confirmed actions through its Python API. The CLI also provides `topology`, `health`, `action plan`, and `action execute` commands. CLI `scan` still outputs only inventory, and there is no `graph` command yet.
 
 Topology is built only from adapters that implement `TopologyProvider`. Docker Adapter now provides Docker container-to-image and container-to-network topology through this API.
 
@@ -168,6 +183,27 @@ text = ActionPlanConsoleRenderer().render(action_result)
 print(text, end="")
 ```
 
+Action execution through the Python Runtime API:
+
+```python
+from zorix_action_model import ActionRequest
+from zorix_runtime import ZorixRuntime
+from zorix_presentation import ActionExecutionConsoleRenderer
+
+runtime = ZorixRuntime()
+runtime.load_plugins("./examples/plugins/linux")
+
+scan_result = runtime.scan()
+execution_result = runtime.execute_action(
+    scan_result.resources,
+    ActionRequest("service.restart", "linux:service:tandem:zorix-action-smoke.service"),
+    confirmed=True,
+)
+
+text = ActionExecutionConsoleRenderer().render(execution_result)
+print(text, end="")
+```
+
 Docker topology through the Python Runtime API:
 
 ```python
@@ -184,7 +220,7 @@ text = TopologyConsoleRenderer().render(topology_result)
 print(text, end="")
 ```
 
-Current Docker support does not include Docker management, Docker Compose topology, volumes, a CLI `graph` command, or a web topology UI. Current Linux support does not execute systemd actions, does not include confirmation prompts, journal logs, process ownership for sockets, public port accessibility, firewall analysis, configurable health thresholds, CPU load, sudo, or multiple hosts in one adapter. Current CLI `scan` still displays only inventory.
+Current Docker support does not include Docker management, Docker Compose topology, volumes, a CLI `graph` command, or a web topology UI. Current Linux support does not include interactive confirmation prompts, journal logs, process ownership for sockets, public port accessibility, firewall analysis, configurable health thresholds, CPU load, sudo, or multiple hosts in one adapter. Current CLI `scan` still displays only inventory.
 
 ## Project Status
 

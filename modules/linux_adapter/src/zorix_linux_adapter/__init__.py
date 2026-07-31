@@ -1,4 +1,5 @@
 from .adapter import LinuxAdapter
+from .action_execution import InvalidLinuxActionPlanError, LinuxActionOutputError
 from .errors import (
     LinuxAdapterError,
     LinuxConfigurationError,
@@ -16,4 +17,6 @@ __all__ = [
     "SshCommandError",
     "SshCommandTimeoutError",
     "LinuxOutputError",
+    "InvalidLinuxActionPlanError",
+    "LinuxActionOutputError",
 ]

@@ -131,6 +131,44 @@ Steps:
 3. Verify the resulting service state
 ```
 
+### ActionExecutionConsoleRenderer
+
+`ActionExecutionConsoleRenderer` форматирует `ActionExecutionResult`.
+
+Он выводит:
+
+- статус исполнения;
+- был ли executor реально вызван;
+- action и target resource;
+- provider;
+- operation token;
+- risk;
+- факт подтверждения;
+- previous/current state;
+- `changed` и `verified`;
+- итоговое сообщение или причину отказа.
+
+Renderer не показывает metadata, traceback или stderr и не выполняет action.
+
+Пример:
+
+```text
+Action execution: SUCCESS
+Executed: yes
+Action: service.restart
+Resource: zorix-action-smoke.service
+Resource ID: linux:service:tandem:zorix-action-smoke.service
+Provider: zorix_linux_adapter.adapter.LinuxAdapter
+Operation: linux.systemd.restart
+Risk: MEDIUM
+Confirmed: yes
+Previous state: active
+Current state: active
+Changed: no
+Verified: yes
+Message: systemd service zorix-action-smoke.service was restarted successfully
+```
+
 ## Общие правила
 
 Renderer'ы:
@@ -217,4 +255,15 @@ text = ActionPlanConsoleRenderer().render(action_result)
 print(text, end="")
 ```
 
-`zorix action plan` использует этот renderer только для dry-run плана. Реальное выполнение actions в текущей итерации отсутствует.
+`zorix action plan` использует этот renderer только для dry-run плана.
+
+## Пример использования ActionExecutionResult
+
+```python
+from zorix_presentation import ActionExecutionConsoleRenderer
+
+text = ActionExecutionConsoleRenderer().render(execution_result)
+print(text, end="")
+```
+
+`zorix action execute` использует этот renderer для результата подтверждённого исполнения или отказа до исполнения.

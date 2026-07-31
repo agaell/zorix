@@ -19,10 +19,18 @@ import zorix_scan_engine
 import zorix_runtime
 import zorix_topology_api
 import zorix_topology_engine
+from zorix_action_api import ActionExecutor
 from zorix_core_model import Adapter, Event, Resource, Tool, Workflow
-from zorix_action_engine import ActionEngine
-from zorix_action_model import ActionPlan, ActionPlanResult, ActionRequest, ActionRisk
-from zorix_presentation import ActionPlanConsoleRenderer
+from zorix_action_engine import ActionEngine, ActionExecutionEngine
+from zorix_action_model import (
+    ActionExecutionResult,
+    ActionExecutionStatus,
+    ActionPlan,
+    ActionPlanResult,
+    ActionRequest,
+    ActionRisk,
+)
+from zorix_presentation import ActionExecutionConsoleRenderer, ActionPlanConsoleRenderer
 from zorix_health_engine import HealthEngine
 from zorix_health_model import HealthFinding, HealthLevel, HealthSeverity
 from zorix_presentation import HealthConsoleRenderer
@@ -63,7 +71,12 @@ class PackagingImportTest(unittest.TestCase):
         self.assertTrue(ActionPlan)
         self.assertTrue(ActionPlanResult)
         self.assertTrue(ActionEngine)
+        self.assertTrue(ActionExecutionStatus)
+        self.assertTrue(ActionExecutionResult)
+        self.assertTrue(ActionExecutor)
+        self.assertTrue(ActionExecutionEngine)
         self.assertTrue(ActionPlanConsoleRenderer)
+        self.assertTrue(ActionExecutionConsoleRenderer)
 
     def test_health_exports_import(self) -> None:
         self.assertTrue(HealthSeverity)

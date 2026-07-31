@@ -11,6 +11,9 @@ from unittest.mock import patch
 
 from zorix.cli import main
 from zorix_action_model import (
+    ActionExecutionRejection,
+    ActionExecutionResult,
+    ActionExecutionStatus,
     ActionPlan,
     ActionPlanResult,
     ActionPlanStatus,
@@ -139,6 +142,40 @@ def _action_result(status: ActionPlanStatus = ActionPlanStatus.READY) -> ActionP
     )
 
 
+def _action_execution_result(
+    status: ActionExecutionStatus = ActionExecutionStatus.SUCCESS,
+) -> ActionExecutionResult:
+    plan_result = _action_result()
+    plan = plan_result.plan
+    request = plan_result.request
+    if status is ActionExecutionStatus.REJECTED:
+        return ActionExecutionResult(
+            ActionExecutionStatus.REJECTED,
+            request,
+            plan,
+            None,
+            None,
+            False,
+            False,
+            "confirmation required",
+            rejection=ActionExecutionRejection(
+                "action.confirmation_required",
+                "confirmation required",
+            ),
+        )
+
+    return ActionExecutionResult(
+        status,
+        request,
+        plan,
+        "inactive",
+        "active",
+        True,
+        status is ActionExecutionStatus.SUCCESS,
+        "executed" if status is ActionExecutionStatus.SUCCESS else "failed",
+    )
+
+
 class FakeRuntime:
     def __init__(
         self,
@@ -149,20 +186,28 @@ class FakeRuntime:
         error_on_topology: Exception | None = None,
         error_on_health: Exception | None = None,
         error_on_action: Exception | None = None,
+        error_on_action_execute: Exception | None = None,
         call_order: list[str] | None = None,
         topology_result: TopologyResult | None = None,
         health_result: HealthResult | None = None,
         action_result: ActionPlanResult | None = None,
+        action_execution_result: ActionExecutionResult | None = None,
     ) -> None:
         self.result = result or _result(ScanStatus.SUCCESS)
         self.topology_result = topology_result or _topology_result(TopologyStatus.SUCCESS)
         self.health_result = health_result or _health_result()
         self.action_result = action_result or _action_result()
+        self.action_execution_result = (
+            action_execution_result
+            if action_execution_result is not None
+            else _action_execution_result()
+        )
         self.error_on_load = error_on_load
         self.error_on_scan = error_on_scan
         self.error_on_topology = error_on_topology
         self.error_on_health = error_on_health
         self.error_on_action = error_on_action
+        self.error_on_action_execute = error_on_action_execute
         self.call_order = call_order if call_order is not None else []
         self.loaded_paths: list[Path] = []
         self.continue_on_error_values: list[bool] = []
@@ -175,6 +220,8 @@ class FakeRuntime:
         self.build_topology_called = False
         self.evaluate_health_called = False
         self.plan_action_called = False
+        self.execute_action_called = False
+        self.action_confirmed_values: list[bool] = []
         self._adapters = (object(),)
 
     def load_plugins(self, path: Path) -> tuple[object, ...]:
@@ -231,6 +278,22 @@ class FakeRuntime:
         if self.error_on_action is not None:
             raise self.error_on_action
         return self.action_result
+
+    def execute_action(
+        self,
+        resources: object,
+        request: ActionRequest,
+        *,
+        confirmed: bool = False,
+    ) -> ActionExecutionResult:
+        self.call_order.append("execute_action")
+        self.execute_action_called = True
+        self.action_resources = resources
+        self.action_request = request
+        self.action_confirmed_values.append(confirmed)
+        if self.error_on_action_execute is not None:
+            raise self.error_on_action_execute
+        return self.action_execution_result
 
     def adapters(self) -> tuple[object, ...]:
         self.call_order.append("adapters")
@@ -305,6 +368,26 @@ class FakeActionPlanRenderer:
 
     def render(self, result: ActionPlanResult) -> str:
         self.call_order.append("action_render")
+        self.received_result = result
+        if self.error is not None:
+            raise self.error
+        return self.text
+
+
+class FakeActionExecutionRenderer:
+    def __init__(
+        self,
+        call_order: list[str] | None = None,
+        text: str = "action execution output\n",
+        error: Exception | None = None,
+    ) -> None:
+        self.call_order = call_order if call_order is not None else []
+        self.text = text
+        self.error = error
+        self.received_result: ActionExecutionResult | None = None
+
+    def render(self, result: ActionExecutionResult) -> str:
+        self.call_order.append("action_execution_render")
         self.received_result = result
         if self.error is not None:
             raise self.error
@@ -1006,6 +1089,7 @@ class CliTest(unittest.TestCase):
         self.assertEqual(context.exception.code, 0)
         self.assertIn("Plan safe infrastructure actions.", stdout.getvalue())
         self.assertIn("plan", stdout.getvalue())
+        self.assertIn("execute", stdout.getvalue())
 
     def test_action_plan_path_continue_flag_and_request(self) -> None:
         runtime = FakeRuntime()
@@ -1152,6 +1236,134 @@ class CliTest(unittest.TestCase):
         self.assertIn("Operation: test.restart\n", stdout)
         self.assertIn("Risk: MEDIUM\n", stdout)
 
+    def test_action_execute_command_requires_arguments_and_plugins(self) -> None:
+        cases = (
+            ["action", "execute"],
+            ["action", "execute", "service.restart"],
+            ["action", "execute", "service.restart", "service-1"],
+        )
+
+        for argv in cases:
+            with self.subTest(argv=argv):
+                stderr = StringIO()
+                with redirect_stderr(stderr), self.assertRaises(SystemExit) as context:
+                    main(argv)
+                self.assertEqual(context.exception.code, 2)
+
+    def test_action_execute_help(self) -> None:
+        stdout = StringIO()
+
+        with redirect_stdout(stdout), self.assertRaises(SystemExit) as context:
+            main(["action", "execute", "--help"])
+
+        self.assertEqual(context.exception.code, 0)
+        self.assertIn("Execute a confirmed safe action.", stdout.getvalue())
+        self.assertIn("--plugins", stdout.getvalue())
+        self.assertIn("--continue-on-error", stdout.getvalue())
+        self.assertIn("--confirm", stdout.getvalue())
+
+    def test_action_execute_without_confirm_delegates_unconfirmed(self) -> None:
+        runtime = FakeRuntime()
+
+        code, stdout, stderr = _run_main(
+            ["action", "execute", "service.restart", "service-1", "--plugins", "plugins"],
+            runtime=runtime,
+            action_execution_renderer=FakeActionExecutionRenderer(text="execution\n"),
+        )
+
+        self.assertEqual(code, 0)
+        self.assertEqual(stdout, "execution\n")
+        self.assertEqual(stderr, "")
+        self.assertEqual(runtime.action_confirmed_values, [False])
+        self.assertEqual(runtime.action_request, ActionRequest("service.restart", "service-1"))
+
+    def test_action_execute_with_confirm_passes_confirmation(self) -> None:
+        runtime = FakeRuntime()
+
+        _run_main(
+            [
+                "action",
+                "execute",
+                "service.restart",
+                "service-1",
+                "--plugins",
+                "plugins",
+                "--confirm",
+            ],
+            runtime=runtime,
+        )
+
+        self.assertEqual(runtime.action_confirmed_values, [True])
+
+    def test_action_execute_scan_failed_does_not_execute(self) -> None:
+        runtime = FakeRuntime(_result(ScanStatus.FAILED))
+
+        code, stdout, stderr = _run_main(
+            ["action", "execute", "service.restart", "service-1", "--plugins", "plugins"],
+            runtime=runtime,
+            renderer=FakeRenderer(text="failed scan\n"),
+        )
+
+        self.assertEqual(code, 4)
+        self.assertEqual(stdout, "failed scan\n")
+        self.assertEqual(stderr, "")
+        self.assertFalse(runtime.execute_action_called)
+
+    def test_action_execute_scan_partial_prints_scan_and_execution_and_returns_three_on_success(self) -> None:
+        runtime = FakeRuntime(_result(ScanStatus.PARTIAL))
+
+        code, stdout, stderr = _run_main(
+            ["action", "execute", "service.restart", "service-1", "--plugins", "plugins"],
+            runtime=runtime,
+            renderer=FakeRenderer(text="scan output\n"),
+            action_execution_renderer=FakeActionExecutionRenderer(text="execution output\n"),
+        )
+
+        self.assertEqual(code, 3)
+        self.assertEqual(stdout, "scan output\n\nexecution output\n")
+        self.assertEqual(stderr, "")
+
+    def test_action_execute_rejected_or_failed_returns_four(self) -> None:
+        for status in (ActionExecutionStatus.REJECTED, ActionExecutionStatus.FAILED):
+            with self.subTest(status=status):
+                runtime = FakeRuntime(action_execution_result=_action_execution_result(status))
+
+                code, _, _ = _run_main(
+                    ["action", "execute", "service.restart", "service-1", "--plugins", "plugins"],
+                    runtime=runtime,
+                )
+
+                self.assertEqual(code, 4)
+
+    def test_action_execute_exception_returns_one_without_stdout(self) -> None:
+        runtime = FakeRuntime(error_on_action_execute=RuntimeError("execution failed"))
+
+        code, stdout, stderr = _run_main(
+            ["action", "execute", "service.restart", "service-1", "--plugins", "plugins"],
+            runtime=runtime,
+        )
+
+        self.assertEqual(code, 1)
+        self.assertEqual(stdout, "")
+        self.assertEqual(stderr, "Error: RuntimeError: execution failed\n")
+
+    def test_action_execute_call_order(self) -> None:
+        call_order: list[str] = []
+        runtime = FakeRuntime(call_order=call_order)
+        action_renderer = FakeActionExecutionRenderer(call_order=call_order)
+
+        _run_main(
+            ["action", "execute", "service.restart", "service-1", "--plugins", "plugins"],
+            runtime=runtime,
+            action_execution_renderer=action_renderer,
+        )
+
+        self.assertEqual(
+            call_order,
+            ["load_plugins", "scan", "execute_action", "action_execution_render"],
+        )
+        self.assertIs(action_renderer.received_result, runtime.action_execution_result)
+
 
 def _run_main(
     argv: list[str],
@@ -1161,6 +1373,7 @@ def _run_main(
     topology_renderer: FakeTopologyRenderer | None = None,
     health_renderer: FakeHealthRenderer | None = None,
     action_renderer: FakeActionPlanRenderer | None = None,
+    action_execution_renderer: FakeActionExecutionRenderer | None = None,
 ) -> tuple[int, str, str]:
     stdout = StringIO()
     stderr = StringIO()
@@ -1173,15 +1386,24 @@ def _run_main(
     action_renderer = (
         action_renderer if action_renderer is not None else FakeActionPlanRenderer()
     )
+    action_execution_renderer = (
+        action_execution_renderer
+        if action_execution_renderer is not None
+        else FakeActionExecutionRenderer()
+    )
 
     with patch("zorix.cli._create_runtime", return_value=runtime):
         with patch("zorix.cli._create_renderer", return_value=renderer):
             with patch("zorix.cli._create_topology_renderer", return_value=topology_renderer):
-                with patch("zorix.cli._create_health_renderer", return_value=health_renderer):
-                    with patch("zorix.cli._create_action_plan_renderer", return_value=action_renderer):
-                        with redirect_stdout(stdout):
-                            with redirect_stderr(stderr):
-                                code = main(argv)
+                    with patch("zorix.cli._create_health_renderer", return_value=health_renderer):
+                        with patch("zorix.cli._create_action_plan_renderer", return_value=action_renderer):
+                            with patch(
+                                "zorix.cli._create_action_execution_renderer",
+                                return_value=action_execution_renderer,
+                            ):
+                                with redirect_stdout(stdout):
+                                    with redirect_stderr(stderr):
+                                        code = main(argv)
 
     return code, stdout.getvalue(), stderr.getvalue()
 

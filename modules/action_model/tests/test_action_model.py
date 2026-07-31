@@ -4,6 +4,9 @@ from dataclasses import FrozenInstanceError
 import unittest
 
 from zorix_action_model import (
+    ActionExecutionRejection,
+    ActionExecutionResult,
+    ActionExecutionStatus,
     ActionPlan,
     ActionPlanResult,
     ActionPlanStatus,
@@ -117,6 +120,78 @@ class ActionModelTest(unittest.TestCase):
                         rejection=ActionRejection("code", "message"),
                         provider_count=provider_count,  # type: ignore[arg-type]
                     )
+
+    def test_action_execution_result_success_invariants_and_metadata(self) -> None:
+        metadata = {"unit": "api.service"}
+        result = ActionExecutionResult(
+            ActionExecutionStatus.SUCCESS,
+            _request(),
+            _plan(),
+            " inactive ",
+            " active ",
+            True,
+            True,
+            " executed ",
+            metadata=metadata,
+        )
+        metadata["unit"] = "changed.service"
+
+        self.assertEqual(result.previous_state, "inactive")
+        self.assertEqual(result.current_state, "active")
+        self.assertEqual(result.message, "executed")
+        self.assertEqual(result.metadata["unit"], "api.service")
+        with self.assertRaises(TypeError):
+            result.metadata["unit"] = "other.service"  # type: ignore[index]
+        with self.assertRaises(ValueError):
+            ActionExecutionResult(
+                ActionExecutionStatus.SUCCESS,
+                _request(),
+                _plan(),
+                None,
+                None,
+                False,
+                False,
+                "bad",
+            )
+
+    def test_action_execution_result_failed_and_rejected_invariants(self) -> None:
+        failed = ActionExecutionResult(
+            ActionExecutionStatus.FAILED,
+            _request(),
+            _plan(),
+            "active",
+            "failed",
+            False,
+            False,
+            "failed",
+        )
+        self.assertIs(failed.status, ActionExecutionStatus.FAILED)
+
+        rejected = ActionExecutionResult(
+            ActionExecutionStatus.REJECTED,
+            _request(),
+            None,
+            None,
+            None,
+            False,
+            False,
+            "rejected",
+            rejection=ActionExecutionRejection(" action.unsupported ", " unsupported "),
+        )
+        self.assertEqual(rejected.rejection.code, "action.unsupported")
+        self.assertEqual(rejected.rejection.message, "unsupported")
+        with self.assertRaises(ValueError):
+            ActionExecutionResult(
+                ActionExecutionStatus.REJECTED,
+                _request(),
+                None,
+                None,
+                None,
+                True,
+                False,
+                "bad",
+                rejection=ActionExecutionRejection("code", "message"),
+            )
 
 
 def _request() -> ActionRequest:

@@ -3,8 +3,15 @@ from __future__ import annotations
 import copy
 import unittest
 
-from zorix_action_api import ActionContext, ActionProvider
-from zorix_action_model import ActionPlan, ActionRequest, ActionRisk, ActionStep
+from zorix_action_api import ActionContext, ActionExecutor, ActionProvider
+from zorix_action_model import (
+    ActionExecutionResult,
+    ActionExecutionStatus,
+    ActionPlan,
+    ActionRequest,
+    ActionRisk,
+    ActionStep,
+)
 from zorix_core_model import Resource
 from zorix_resource_graph import DuplicateResourceError, UnknownResourceError
 
@@ -16,6 +23,24 @@ class ExampleProvider:
 
 class NotProvider:
     pass
+
+
+class ExampleExecutor:
+    def execute_action(
+        self,
+        context: ActionContext,
+        plan: ActionPlan,
+    ) -> ActionExecutionResult:
+        return ActionExecutionResult(
+            ActionExecutionStatus.SUCCESS,
+            plan.request,
+            plan,
+            "inactive",
+            "active",
+            True,
+            True,
+            "executed",
+        )
 
 
 class ActionApiTest(unittest.TestCase):
@@ -49,6 +74,10 @@ class ActionApiTest(unittest.TestCase):
     def test_action_provider_runtime_protocol(self) -> None:
         self.assertIsInstance(ExampleProvider(), ActionProvider)
         self.assertNotIsInstance(NotProvider(), ActionProvider)
+
+    def test_action_executor_runtime_protocol(self) -> None:
+        self.assertIsInstance(ExampleExecutor(), ActionExecutor)
+        self.assertNotIsInstance(NotProvider(), ActionExecutor)
 
     def test_context_does_not_mutate_resources(self) -> None:
         resources = [_resource("r1", "service")]

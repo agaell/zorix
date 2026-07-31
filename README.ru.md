@@ -1,7 +1,3 @@
-
-## `README.ru.md`
-
-```markdown
 <p align="center">
   <img src="assets/source/logo.png" alt="Zorix" width="220">
 </p>

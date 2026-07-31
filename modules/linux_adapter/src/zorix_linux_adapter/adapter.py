@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from zorix_action_api import ActionContext
-from zorix_action_model import ActionPlan, ActionRequest
+from zorix_action_model import ActionExecutionResult, ActionPlan, ActionRequest
 from zorix_core_model import Adapter, Resource
 from zorix_health_api import HealthContext
 from zorix_health_model import HealthFinding
@@ -9,6 +9,7 @@ from zorix_resource_graph import ResourceRelation
 from zorix_topology_api import TopologyContext
 
 from .command import SshCommandRunner, SubprocessSshCommandRunner
+from .action_execution import execute_linux_action
 from .actions import plan_linux_action
 from .filesystems import filesystems_to_resources
 from .health import evaluate_linux_health
@@ -73,6 +74,19 @@ class LinuxAdapter(Adapter):
             provider=_class_name(self),
             context=context,
             request=request,
+        )
+
+    def execute_action(
+        self,
+        context: ActionContext,
+        plan: ActionPlan,
+    ) -> ActionExecutionResult:
+        return execute_linux_action(
+            target=self.target,
+            provider=_class_name(self),
+            runner=self._runner,
+            context=context,
+            plan=plan,
         )
 
 

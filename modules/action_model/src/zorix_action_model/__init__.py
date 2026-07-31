@@ -8,6 +8,11 @@ from .model import (
     ActionStep,
     risk_rank,
 )
+from .execution import (
+    ActionExecutionRejection,
+    ActionExecutionResult,
+    ActionExecutionStatus,
+)
 
 __all__ = [
     "ActionRisk",
@@ -18,4 +23,7 @@ __all__ = [
     "ActionRejection",
     "ActionPlanResult",
     "risk_rank",
+    "ActionExecutionStatus",
+    "ActionExecutionRejection",
+    "ActionExecutionResult",
 ]

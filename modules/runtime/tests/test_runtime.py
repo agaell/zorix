@@ -5,7 +5,17 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from zorix_action_model import ActionPlanResult, ActionPlanStatus, ActionRejection, ActionRequest
+from zorix_action_model import (
+    ActionExecutionResult,
+    ActionExecutionStatus,
+    ActionPlan,
+    ActionPlanResult,
+    ActionPlanStatus,
+    ActionRejection,
+    ActionRequest,
+    ActionRisk,
+    ActionStep,
+)
 from zorix_core_model import Adapter, Resource
 from zorix_health_engine import HealthResult, HealthStatus
 from zorix_health_model import HealthLevel
@@ -314,6 +324,59 @@ class RuntimeTest(unittest.TestCase):
         topology_engine_class.return_value.build.assert_not_called()
         health_engine_class.return_value.evaluate.assert_not_called()
 
+    def test_execute_action_delegates_resources_request_and_confirmation(self) -> None:
+        resources = [_resource("service-1", "service")]
+        request = ActionRequest("service.restart", "service-1")
+        expected_result = _execution_result(request)
+
+        with patch("zorix_runtime.runtime.ActionExecutionEngine") as execution_engine_class:
+            execution_engine = execution_engine_class.return_value
+            execution_engine.execute.return_value = expected_result
+            runtime = ZorixRuntime()
+
+            result = runtime.execute_action(resources, request, confirmed=True)
+
+        execution_engine.execute.assert_called_once_with(
+            resources,
+            request,
+            confirmed=True,
+        )
+        self.assertIs(result, expected_result)
+
+    def test_execute_action_uses_runtime_registry(self) -> None:
+        registry = Registry()
+
+        with patch("zorix_runtime.runtime.ActionExecutionEngine") as execution_engine_class:
+            runtime = ZorixRuntime(registry=registry)
+
+        execution_engine_class.assert_called_once_with(registry)
+        self.assertTrue(callable(runtime.execute_action))
+
+    def test_execute_action_does_not_call_scan_topology_health_or_discover(self) -> None:
+        adapter = CountingAdapter()
+        registry = Registry()
+        registry.register(adapter)
+        request = ActionRequest("service.restart", "service-1")
+
+        with patch("zorix_runtime.runtime.ActionExecutionEngine") as execution_engine_class, patch(
+            "zorix_runtime.runtime.ScanEngine"
+        ) as scan_engine_class, patch("zorix_runtime.runtime.TopologyEngine") as topology_engine_class, patch(
+            "zorix_runtime.runtime.HealthEngine"
+        ) as health_engine_class:
+            runtime = ZorixRuntime(registry=registry)
+
+            runtime.execute_action([], request)
+
+        execution_engine_class.return_value.execute.assert_called_once_with(
+            [],
+            request,
+            confirmed=False,
+        )
+        scan_engine_class.return_value.scan.assert_not_called()
+        topology_engine_class.return_value.build.assert_not_called()
+        health_engine_class.return_value.evaluate.assert_not_called()
+        self.assertEqual(adapter.discover_calls, 0)
+
 
 def _topology_result() -> TopologyResult:
     return TopologyResult(
@@ -342,6 +405,30 @@ def _action_result() -> ActionPlanResult:
         status=ActionPlanStatus.REJECTED,
         request=ActionRequest("service.restart", "service-1"),
         rejection=ActionRejection("action.unsupported", "unsupported"),
+    )
+
+
+def _execution_result(request: ActionRequest) -> ActionExecutionResult:
+    plan = ActionPlan(
+        "test",
+        "provider.Class",
+        request,
+        "service-1",
+        "test.operation",
+        ActionRisk.MEDIUM,
+        True,
+        "Plan action",
+        (ActionStep(1, "step.one", "First step"),),
+    )
+    return ActionExecutionResult(
+        ActionExecutionStatus.SUCCESS,
+        request,
+        plan,
+        "inactive",
+        "active",
+        True,
+        True,
+        "executed",
     )
 
 

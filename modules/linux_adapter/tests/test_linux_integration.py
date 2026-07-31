@@ -5,12 +5,13 @@ from pathlib import Path
 import unittest
 from unittest.mock import patch
 
-from zorix_action_engine import ActionEngine
-from zorix_action_model import ActionRequest
+from zorix_action_engine import ActionEngine, ActionExecutionEngine
+from zorix_action_model import ActionExecutionStatus, ActionRequest
 from zorix_linux_adapter import LinuxAdapter, LinuxConfigurationError
 from zorix_health_engine import HealthEngine
 from zorix_presentation import (
     ActionPlanConsoleRenderer,
+    ActionExecutionConsoleRenderer,
     HealthConsoleRenderer,
     TopologyConsoleRenderer,
 )
@@ -216,6 +217,56 @@ class LinuxIntegrationTest(unittest.TestCase):
         self.assertIn("Risk: MEDIUM\n", rendered)
         self.assertIn("Confirmation required: yes\n", rendered)
 
+    def test_scan_resources_can_execute_confirmed_linux_action(self) -> None:
+        runner = FakeSshCommandRunner(
+            _snapshot(
+                hostname="tandem-server\n",
+                kernel="6.8.0\n",
+                architecture="x86_64\n",
+                os_release='ID=ubuntu\nPRETTY_NAME="Ubuntu 24.04 LTS"\nVERSION_ID="24.04"\n',
+                services="zorix-action-smoke.service loaded active running Smoke\n",
+                meminfo="MemTotal:       8192000 kB\nMemAvailable:   4096000 kB\n",
+                filesystems="/dev/vda1 ext4 100 20 80 20% /\n",
+                sockets="tcp LISTEN 0 511 0.0.0.0:443 0.0.0.0:*\n",
+            ),
+            _systemd_action_output(
+                action="restart",
+                unit="zorix-action-smoke.service",
+                before_active_state="active",
+                before_sub_state="running",
+                after_active_state="active",
+                after_sub_state="running",
+            ),
+        )
+        adapter = LinuxAdapter("tandem", runner)
+        registry = Registry()
+        registry.register(adapter)
+
+        scan_result = ScanEngine(registry).scan()
+        execution_result = ActionExecutionEngine(registry).execute(
+            scan_result.resources,
+            ActionRequest(
+                "service.restart",
+                "linux:service:tandem:zorix-action-smoke.service",
+            ),
+            confirmed=True,
+        )
+        rendered = ActionExecutionConsoleRenderer().render(execution_result)
+
+        self.assertIs(execution_result.status, ActionExecutionStatus.SUCCESS)
+        self.assertEqual(len(runner.calls), 2)
+        self.assertEqual(runner.calls[0], ("tandem", ("sh", "-s")))
+        self.assertEqual(
+            runner.calls[1],
+            (
+                "tandem",
+                ("sh", "-s", "--", "restart", "zorix-action-smoke.service"),
+            ),
+        )
+        self.assertIn("Action execution: SUCCESS\n", rendered)
+        self.assertIn("Executed: yes\n", rendered)
+        self.assertIn("Verified: yes\n", rendered)
+
 
 class LinuxPluginLoaderIntegrationTest(unittest.TestCase):
     def test_example_linux_plugin_is_loaded_from_environment_target(self) -> None:
@@ -272,6 +323,29 @@ def _section(name: str, content: str) -> str:
         f"__ZORIX_SNAPSHOT_V1_BEGIN__:{name}\n"
         f"{content}"
         f"\n__ZORIX_SNAPSHOT_V1_END__:{name}\n"
+    )
+
+
+def _systemd_action_output(
+    *,
+    action: str,
+    unit: str,
+    before_active_state: str,
+    before_sub_state: str,
+    after_active_state: str,
+    after_sub_state: str,
+    action_exit_code: str = "0",
+) -> str:
+    return (
+        "__ZORIX_SYSTEMD_ACTION_V1_BEGIN__\n"
+        f"action={action}\n"
+        f"unit={unit}\n"
+        f"before_active_state={before_active_state}\n"
+        f"before_sub_state={before_sub_state}\n"
+        f"action_exit_code={action_exit_code}\n"
+        f"after_active_state={after_active_state}\n"
+        f"after_sub_state={after_sub_state}\n"
+        "__ZORIX_SYSTEMD_ACTION_V1_END__\n"
     )
 
 
